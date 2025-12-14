@@ -8,7 +8,6 @@ Amazon Bedrock AgentCore Runtime上で動作する
 import os
 import asyncio
 import httpx
-import boto3
 import json
 import base64
 from datetime import datetime
@@ -17,75 +16,15 @@ from strands import Agent, tool
 from bedrock_agentcore.runtime import BedrockAgentCoreApp, BedrockAgentCoreContext
 
 
-# CloudFormation設定管理
-class CloudFormationConfig:
-    """CloudFormationスタックから動的に設定を取得"""
+# 環境変数設定管理
+def _get_gateway_endpoint() -> str:
+    """Gateway エンドポイントを環境変数から取得"""
+    gateway_id = os.environ.get('HEALTHMANAGER_GATEWAY_ID')
+    if not gateway_id:
+        raise Exception("環境変数 HEALTHMANAGER_GATEWAY_ID が設定されていません")
     
-    def __init__(self):
-        self._gateway_id: Optional[str] = None
-        self._region: Optional[str] = None
-        self._gateway_endpoint: Optional[str] = None
-    
-    def _get_stack_name(self) -> str:
-        """スタック名を環境変数または デフォルト値から取得"""
-        return os.environ.get('HEALTH_STACK_NAME', 'HealthManagerMCPStack')
-    
-    def _get_region(self) -> str:
-        """AWSリージョンを取得"""
-        if self._region is None:
-            # 環境変数、AWS設定、デフォルトの順で取得
-            self._region = (
-                os.environ.get('AWS_REGION') or 
-                os.environ.get('AWS_DEFAULT_REGION') or
-                boto3.Session().region_name or
-                'us-west-2'
-            )
-        return self._region
-    
-    def _fetch_cloudformation_outputs(self) -> dict:
-        """CloudFormationスタックの出力を取得"""
-        try:
-            stack_name = self._get_stack_name()
-            region = self._get_region()
-            
-            cfn = boto3.client('cloudformation', region_name=region)
-            response = cfn.describe_stacks(StackName=stack_name)
-            
-            if not response['Stacks']:
-                raise Exception(f"CloudFormationスタック '{stack_name}' が見つかりません")
-            
-            outputs = {}
-            for output in response['Stacks'][0].get('Outputs', []):
-                outputs[output['OutputKey']] = output['OutputValue']
-            
-            return outputs
-            
-        except Exception as e:
-            # CloudFormation取得に失敗した場合はデフォルト値を使用
-            print(f"CloudFormation設定取得エラー（デフォルト値を使用）: {e}")
-            return {
-                'GatewayId': os.environ.get('HEALTH_GATEWAY_ID', 'CONFIGURE_GATEWAY_ID'),
-                'Region': self._get_region()
-            }
-    
-    def get_gateway_id(self) -> str:
-        """Gateway IDを取得"""
-        if self._gateway_id is None:
-            outputs = self._fetch_cloudformation_outputs()
-            self._gateway_id = outputs.get('GatewayId', os.environ.get('HEALTH_GATEWAY_ID', 'CONFIGURE_GATEWAY_ID'))
-        return self._gateway_id
-    
-    def get_gateway_endpoint(self) -> str:
-        """Gateway エンドポイントを取得"""
-        if self._gateway_endpoint is None:
-            gateway_id = self.get_gateway_id()
-            region = self._get_region()
-            self._gateway_endpoint = f"https://{gateway_id}.gateway.bedrock-agentcore.{region}.amazonaws.com/mcp"
-        return self._gateway_endpoint
-
-
-# グローバル設定インスタンス
-_config = CloudFormationConfig()
+    region = os.environ.get('AWS_REGION', 'us-west-2')
+    return f"https://{gateway_id}.gateway.bedrock-agentcore.{region}.amazonaws.com/mcp"
 
 # グローバルJWTトークン（一時的なハック）
 _current_jwt_token = None
@@ -189,8 +128,8 @@ async def _call_mcp_gateway(method: str, params: dict = None):
     if not jwt_token:
         raise Exception("認証トークンが見つかりません。HealthMate UIから適切に認証されていることを確認してください。")
     
-    # CloudFormationから動的にエンドポイントを取得
-    gateway_endpoint = _config.get_gateway_endpoint()
+    # 環境変数からエンドポイントを取得
+    gateway_endpoint = _get_gateway_endpoint()
     print(f"DEBUG: Gateway endpoint: {gateway_endpoint}")
     
     async with httpx.AsyncClient() as client:
@@ -345,7 +284,7 @@ async def _create_health_coach_agent():
 """
     
     return Agent(
-        model="anthropic.claude-3-5-sonnet-20241022-v2:0",
+        model="global.anthropic.claude-sonnet-4-5-20250929-v1:0",
         tools=[list_health_tools, health_manager_mcp],
         system_prompt=f"""
 あなたは親しみやすい健康コーチAIです。ユーザーの健康目標達成を支援します。

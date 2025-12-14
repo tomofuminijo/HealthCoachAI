@@ -68,16 +68,6 @@ def create_iam_role_and_policies():
                 'name': 'HealthCoachAI-AgentCore-Runtime-Policy',
                 'file': 'bedrock-agentcore-runtime-policy.json',
                 'description': 'AgentCore Runtime Basic Permissions'
-            },
-            {
-                'name': 'HealthCoachAI-CloudFormation-Read-Policy',
-                'file': 'cloudformation-read-policy.json',
-                'description': 'CloudFormation Read Permissions'
-            },
-            {
-                'name': 'HealthCoachAI-Cognito-Read-Policy',
-                'file': 'cognito-read-policy.json',
-                'description': 'Cognito Read Permissions'
             }
         ]
         

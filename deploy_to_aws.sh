@@ -72,6 +72,23 @@ echo ""
 echo "🔧 AgentCore設定を更新中..."
 echo "   カスタムIAMロールを使用: $CUSTOM_ROLE_ARN"
 
+# CloudFormationからGateway IDを取得
+echo ""
+echo "🔍 HealthManagerMCPスタックからGateway IDを取得中..."
+STACK_NAME="HealthManagerMCPStack"
+GATEWAY_ID=$(aws cloudformation describe-stacks \
+    --stack-name "$STACK_NAME" \
+    --query 'Stacks[0].Outputs[?OutputKey==`GatewayId`].OutputValue' \
+    --output text 2>/dev/null)
+
+if [ -z "$GATEWAY_ID" ] || [ "$GATEWAY_ID" = "None" ]; then
+    echo "❌ CloudFormationスタック '$STACK_NAME' からGateway IDを取得できませんでした"
+    echo "   スタックが存在し、GatewayId出力があることを確認してください"
+    exit 1
+fi
+
+echo "✅ Gateway ID取得成功: $GATEWAY_ID"
+
 # AgentCore設定でカスタムロールを指定
 agentcore configure \
     --entrypoint health_coach_ai/agent.py \
@@ -92,8 +109,10 @@ echo "   エントリーポイント: health_coach_ai/agent.py"
 echo "   カスタムIAMロール: $CUSTOM_ROLE_ARN"
 echo ""
 
-# AgentCore デプロイを実行
-agentcore deploy
+# AgentCore デプロイを実行（環境変数付き）
+agentcore launch \
+    --env HEALTHMANAGER_GATEWAY_ID="$GATEWAY_ID" \
+    --env AWS_REGION="$AWS_DEFAULT_REGION"
 
 echo ""
 echo "✅ デプロイが完了しました！"

@@ -84,15 +84,16 @@ python3 create_custom_iam_role.py
 カスタムIAMロールには以下の権限が含まれます：
 
 - **AgentCore Runtime基本権限**: Bedrock、ログ、ECR等
-- **CloudFormation読み取り権限**: MCP Gateway設定の動的取得
-- **Cognito読み取り権限**: ユーザー認証情報の取得
 
-### 環境変数設定（オプション）
+### 環境変数設定
 
-以下の環境変数で動作をカスタマイズできます：
+デプロイ時に以下の環境変数が自動設定されます：
 
 ```bash
-# CloudFormationスタック名（デフォルト: HealthManagerMCPStack）
+# HealthManagerMCP Gateway ID（デプロイ時に自動設定）
+HEALTHMANAGER_GATEWAY_ID="gateway-id-from-cloudformation"
+
+# AWSリージョン（デフォルト: us-west-2）
 export HEALTH_STACK_NAME="YOUR_CLOUDFORMATION_STACK_NAME"
 
 # AWS設定（オプション）
