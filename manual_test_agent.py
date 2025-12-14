@@ -14,6 +14,7 @@ import hmac
 import base64
 import json
 import sys
+import os
 import readline
 from botocore.exceptions import ClientError
 from health_coach_ai.agent import invoke_health_coach
@@ -70,12 +71,21 @@ class LocalTestSession:
             )
             client_secret = client_response['UserPoolClient']['ClientSecret']
             
+            # HEALTHMANAGER_GATEWAY_ID環境変数を設定（ローカルテスト用）
+            gateway_id = outputs['GatewayId']
+            os.environ['HEALTHMANAGER_GATEWAY_ID'] = gateway_id
+            os.environ['AWS_REGION'] = region
+            
+            print(f"🔧 環境変数設定完了:")
+            print(f"   HEALTHMANAGER_GATEWAY_ID: {gateway_id}")
+            print(f"   AWS_REGION: {region}")
+            
             return {
                 'region': region,
                 'user_pool_id': outputs['UserPoolId'],
                 'client_id': outputs['UserPoolClientId'],
                 'client_secret': client_secret,
-                'gateway_id': outputs['GatewayId']
+                'gateway_id': gateway_id
             }
             
         except Exception as e:
@@ -229,6 +239,11 @@ def print_banner():
     print("手動でテストできます。JWTトークンは自動生成され、")
     print("実際のMCP Gatewayと連携します。")
     print()
+    print("🔧 CloudFormationスタックから自動的に以下を取得・設定:")
+    print("   - HEALTHMANAGER_GATEWAY_ID環境変数")
+    print("   - AWS_REGION環境変数")
+    print("   - Cognito認証情報")
+    print()
     print(f"🌍 テスト設定:")
     print(f"   タイムゾーン: {TEST_TIMEZONE}")
     print(f"   言語: {TEST_LANGUAGE}")
@@ -318,11 +333,12 @@ async def main():
     """メイン関数"""
     print_banner()
     
-    # セッション初期化
+    # セッション初期化（CloudFormation設定取得と環境変数設定を含む）
+    print("🔍 CloudFormationスタックから設定を取得中...")
     session = LocalTestSession()
     
     # 初回認証
-    print("🚀 初期認証を実行します...")
+    print("\n🚀 初期認証を実行します...")
     auth_success = await session.setup_authentication()
     
     if not auth_success:
@@ -371,11 +387,22 @@ async def main():
                 print(f"   JWT Token: {'✅ 有効' if session.jwt_token else '❌ なし'}")
                 print(f"   会話回数: {session.conversation_count}")
                 
+                # 環境変数の状態を表示
+                print(f"\n🔧 環境変数状態:")
+                gateway_id = os.environ.get('HEALTHMANAGER_GATEWAY_ID')
+                aws_region = os.environ.get('AWS_REGION')
+                print(f"   HEALTHMANAGER_GATEWAY_ID: {'✅ 設定済み' if gateway_id else '❌ 未設定'}")
+                if gateway_id:
+                    print(f"   Gateway ID: {gateway_id}")
+                print(f"   AWS_REGION: {'✅ 設定済み' if aws_region else '❌ 未設定'}")
+                if aws_region:
+                    print(f"   Region: {aws_region}")
+                
                 # 現在のユーザーIDを表示
                 if session.jwt_token:
                     payload = session._decode_jwt_payload(session.jwt_token)
                     user_id = payload.get('sub')
-                    print(f"   🔑 現在のユーザーID (sub): {user_id}")
+                    print(f"\n🔑 現在のユーザーID (sub): {user_id}")
                 
                 print()
                 continue
