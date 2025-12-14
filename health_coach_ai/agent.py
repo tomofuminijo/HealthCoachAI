@@ -87,6 +87,9 @@ class CloudFormationConfig:
 # グローバル設定インスタンス
 _config = CloudFormationConfig()
 
+# グローバルJWTトークン（一時的なハック）
+_current_jwt_token = None
+
 
 # JWT Token ヘルパー関数
 def _decode_jwt_payload(jwt_token: str) -> dict:
@@ -116,48 +119,79 @@ def _decode_jwt_payload(jwt_token: str) -> dict:
         return {}
 
 
-async def _get_jwt_token():
-    """JWT認証トークンを取得"""
-    # AgentCore Runtime環境でUIから渡されたJWTトークンを取得
-    jwt_token = BedrockAgentCoreContext.get_workload_access_token()
+def _get_jwt_token():
+    """JWT認証トークンを取得（同期版）"""
+    global _current_jwt_token
     
-    if not jwt_token:
-        # フォールバック: リクエストヘッダーからAuthorizationを取得
-        headers = BedrockAgentCoreContext.get_request_headers()
-        if headers and 'Authorization' in headers:
-            auth_header = headers['Authorization']
-            if auth_header.startswith('Bearer '):
-                jwt_token = auth_header[7:]  # "Bearer " を除去
-        
-    return jwt_token
-
-
-async def _get_user_id_from_jwt():
-    """JWTトークンからユーザーIDを取得"""
     try:
-        jwt_token = await _get_jwt_token()
+        # まずグローバル変数から取得を試行
+        if _current_jwt_token:
+            print(f"DEBUG: JWT token from global variable: {_current_jwt_token[:50]}...")
+            return _current_jwt_token
+        
+        # AgentCore Runtime環境でUIから渡されたJWTトークンを取得
+        try:
+            jwt_token = BedrockAgentCoreContext.get_workload_access_token()
+            if jwt_token:
+                print(f"DEBUG: JWT token from get_workload_access_token: {jwt_token[:50]}...")
+                return jwt_token
+        except Exception as e:
+            print(f"DEBUG: get_workload_access_token エラー: {e}")
+        
+        # フォールバック: リクエストヘッダーからAuthorizationを取得
+        try:
+            headers = BedrockAgentCoreContext.get_request_headers()
+            print(f"DEBUG: Request headers: {headers}")
+            
+            if headers and 'Authorization' in headers:
+                auth_header = headers['Authorization']
+                if auth_header.startswith('Bearer '):
+                    jwt_token = auth_header[7:]  # "Bearer " を除去
+                    print(f"DEBUG: JWT token from Authorization header: {jwt_token[:50]}...")
+                    return jwt_token
+        except Exception as e:
+            print(f"DEBUG: get_request_headers エラー: {e}")
+        
+        print(f"DEBUG: JWT token not found in any source")
+        return None
+        
+    except Exception as e:
+        print(f"DEBUG: JWT token取得エラー: {e}")
+        return None
+
+
+def _get_user_id_from_jwt():
+    """JWTトークンからユーザーIDを取得（同期版）"""
+    try:
+        jwt_token = _get_jwt_token()
         if not jwt_token:
+            print(f"DEBUG: No JWT token available for user ID extraction")
             return None
         
         payload = _decode_jwt_payload(jwt_token)
         user_id = payload.get('sub')  # Cognitoの場合、subフィールドにユーザーIDが含まれる
         
+        print(f"DEBUG: Extracted user ID from JWT: {user_id}")
         return user_id
         
     except Exception as e:
-        print(f"ユーザーID取得エラー: {e}")
+        print(f"DEBUG: ユーザーID取得エラー: {e}")
         return None
 
 
 async def _call_mcp_gateway(method: str, params: dict = None):
     """MCP Gatewayを呼び出す共通関数"""
-    jwt_token = await _get_jwt_token()
+    jwt_token = _get_jwt_token()
+    
+    print(f"DEBUG: _call_mcp_gateway called with method: {method}, params: {params}")
+    print(f"DEBUG: JWT token available: {'Yes' if jwt_token else 'No'}")
     
     if not jwt_token:
         raise Exception("認証トークンが見つかりません。HealthMate UIから適切に認証されていることを確認してください。")
     
     # CloudFormationから動的にエンドポイントを取得
     gateway_endpoint = _config.get_gateway_endpoint()
+    print(f"DEBUG: Gateway endpoint: {gateway_endpoint}")
     
     async with httpx.AsyncClient() as client:
         payload = {
@@ -277,7 +311,7 @@ async def _create_health_coach_agent():
     """HealthCoachAIエージェントを作成（ユーザーID自動設定付き）"""
     
     # JWTトークンからユーザーIDを取得
-    user_id = await _get_user_id_from_jwt()
+    user_id = _get_user_id_from_jwt()
     
     # 現在日時を取得
     current_datetime = datetime.now()
@@ -439,7 +473,64 @@ app = BedrockAgentCoreApp()
 @app.entrypoint
 async def invoke(payload):
     """HealthCoachAI のエントリーポイント"""
+    # デバッグ: ペイロード全体を確認
+    print(f"DEBUG: Full payload: {payload}")
+    
     prompt = payload.get("input", {}).get("prompt", "")
+    
+    # 別の可能性も試す
+    if not prompt:
+        prompt = payload.get("prompt", "")
+    if not prompt:
+        prompt = payload.get("message", "")
+    
+    # JWTトークンをペイロードから直接取得を試行
+    jwt_token_from_payload = None
+    
+    # 様々な場所からJWTトークンを探す
+    if "jwt_token" in payload:
+        jwt_token_from_payload = payload["jwt_token"]
+        print(f"DEBUG: JWT token from payload.jwt_token: {jwt_token_from_payload[:50]}...")
+    elif "input" in payload and isinstance(payload["input"], dict) and "jwt_token" in payload["input"]:
+        jwt_token_from_payload = payload["input"]["jwt_token"]
+        print(f"DEBUG: JWT token from payload.input.jwt_token: {jwt_token_from_payload[:50]}...")
+    elif "sessionState" in payload and "sessionAttributes" in payload["sessionState"]:
+        session_attrs = payload["sessionState"]["sessionAttributes"]
+        if "jwt_token" in session_attrs:
+            jwt_token_from_payload = session_attrs["jwt_token"]
+            print(f"DEBUG: JWT token from sessionState: {jwt_token_from_payload[:50]}...")
+    
+    # さらに詳細な検索
+    if not jwt_token_from_payload:
+        print(f"DEBUG: Searching for JWT token in all payload keys...")
+        def search_jwt_recursive(obj, path=""):
+            if isinstance(obj, dict):
+                for key, value in obj.items():
+                    current_path = f"{path}.{key}" if path else key
+                    if key == "jwt_token" and isinstance(value, str) and len(value) > 50:
+                        print(f"DEBUG: Found JWT token at {current_path}: {value[:50]}...")
+                        return value
+                    elif isinstance(value, (dict, list)):
+                        result = search_jwt_recursive(value, current_path)
+                        if result:
+                            return result
+            elif isinstance(obj, list):
+                for i, item in enumerate(obj):
+                    current_path = f"{path}[{i}]" if path else f"[{i}]"
+                    result = search_jwt_recursive(item, current_path)
+                    if result:
+                        return result
+            return None
+        
+        jwt_token_from_payload = search_jwt_recursive(payload)
+    
+    # グローバル変数にJWTトークンを設定（一時的なハック）
+    if jwt_token_from_payload:
+        global _current_jwt_token
+        _current_jwt_token = jwt_token_from_payload
+        print(f"DEBUG: Set global JWT token: {jwt_token_from_payload[:50]}...")
+    else:
+        print(f"DEBUG: No JWT token found in payload")
     
     if not prompt:
         yield {"event": {"contentBlockDelta": {"delta": {"text": "こんにちは！健康に関してどのようなサポートが必要ですか？"}}}}

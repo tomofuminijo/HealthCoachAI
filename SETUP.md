@@ -1,44 +1,74 @@
 # HealthCoachAI セットアップガイド
 
-## クイックスタート
+## 🚀 クイックスタート（推奨方法）
 
-1. **クローンとセットアップ**
-   ```bash
-   git clone <repository-url>
-   cd health-coach-ai
-   python -m venv venv
-   source venv/bin/activate  # Windows: venv\Scripts\activate
-   pip install -r requirements.txt
-   ```
+### 1. リポジトリのクローンと環境準備
 
-2. **環境変数の設定**
-   ```bash
-   # 必須: CloudFormationスタック名
-   export HEALTH_STACK_NAME="YOUR_CLOUDFORMATION_STACK_NAME"
-   
-   # オプション: AWSリージョン（デフォルト: us-west-2）
-   export AWS_REGION="your-aws-region"
-   
-   # 代替: 手動設定（CloudFormationが利用できない場合）
-   export HEALTH_GATEWAY_ID="your-gateway-id"
-   export COGNITO_USER_POOL_ID="your-user-pool-id"
-   export COGNITO_CLIENT_ID="your-client-id"
-   export COGNITO_CLIENT_SECRET="your-client-secret"
-   ```
+```bash
+git clone https://github.com/tomofuminijo/HealthCoachAI.git
+cd HealthCoachAI
+python3 -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
 
-3. **セットアップのテスト**
-   ```bash
-   # 基本テストの実行
-   python test_health_coach_agent_simple.py
-   
-   # インタラクティブテスト
-   python manual_test_agent.py
-   ```
+### 2. AWS認証の設定
 
-4. **AgentCore Runtimeへのデプロイ**
-   ```bash
-   python run_agent.py
-   ```
+```bash
+# 方法1: AWS CLIで設定
+aws configure
+
+# 方法2: 環境変数で設定
+export AWS_ACCESS_KEY_ID="your-access-key"
+export AWS_SECRET_ACCESS_KEY="your-secret-key"
+export AWS_REGION="us-west-2"
+```
+
+### 3. ワンコマンドデプロイ
+
+```bash
+# カスタムIAMロール自動作成 + デプロイ
+./deploy_to_aws.sh
+```
+
+このスクリプトは以下を自動実行します：
+- カスタムIAMロールの作成（必要な場合）
+- 適切な権限ポリシーのアタッチ
+- AgentCore Runtime設定
+- エージェントのデプロイ
+
+### 4. デプロイ後のテスト
+
+```bash
+# エージェント状態確認
+agentcore status
+
+# デプロイ済みエージェントのテスト
+python3 manual_test_deployed_agent.py
+```
+
+## 🔧 詳細セットアップ
+
+### カスタムIAMロール作成（手動）
+
+```bash
+# 必要な権限を持つカスタムIAMロールを作成
+python3 create_custom_iam_role.py
+```
+
+作成されるIAMロール：
+- **ロール名**: `HealthCoachAI-AgentCore-Runtime-Role`
+- **権限**: AgentCore Runtime基本権限 + CloudFormation読み取り + Cognito読み取り
+
+### 環境変数設定（オプション）
+
+```bash
+# CloudFormationスタック名（デフォルト: HealthManagerMCPStack）
+export HEALTH_STACK_NAME="YOUR_STACK_NAME"
+
+# AWSリージョン（デフォルト: us-west-2）
+export AWS_REGION="your-aws-region"
+```
 
 ## 設定要件
 

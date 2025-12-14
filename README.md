@@ -42,12 +42,57 @@ HealthCoachAIは、ユーザーの健康目標達成を支援するAIエージ�
 - Amazon Bedrock AgentCore Runtime環境
 - MCP Gatewayスタックのデプロイ
 
-### 環境変数設定
+### 🚀 クイックスタート（推奨）
 
-以下の環境変数を設定してください：
+#### 1. カスタムIAMロール作成とデプロイ
 
 ```bash
-# CloudFormationスタック名（オプション）
+# 1. リポジトリをクローン
+git clone https://github.com/tomofuminijo/HealthCoachAI.git
+cd HealthCoachAI
+
+# 2. 仮想環境を作成・アクティベート
+python3 -m venv venv
+source venv/bin/activate
+
+# 3. 依存関係をインストール
+pip install -r requirements.txt
+
+# 4. AWS認証を設定
+aws configure
+# または環境変数を設定
+export AWS_ACCESS_KEY_ID="your-access-key"
+export AWS_SECRET_ACCESS_KEY="your-secret-key"
+export AWS_REGION="us-west-2"
+
+# 5. ワンコマンドデプロイ（IAMロール自動作成）
+./deploy_to_aws.sh
+```
+
+#### 2. 手動でIAMロール作成（詳細制御が必要な場合）
+
+```bash
+# カスタムIAMロールを事前作成
+python3 create_custom_iam_role.py
+
+# デプロイ実行
+./deploy_to_aws.sh
+```
+
+### 🔐 IAMロール権限
+
+カスタムIAMロールには以下の権限が含まれます：
+
+- **AgentCore Runtime基本権限**: Bedrock、ログ、ECR等
+- **CloudFormation読み取り権限**: MCP Gateway設定の動的取得
+- **Cognito読み取り権限**: ユーザー認証情報の取得
+
+### 環境変数設定（オプション）
+
+以下の環境変数で動作をカスタマイズできます：
+
+```bash
+# CloudFormationスタック名（デフォルト: HealthManagerMCPStack）
 export HEALTH_STACK_NAME="YOUR_CLOUDFORMATION_STACK_NAME"
 
 # AWS設定（オプション）
@@ -184,7 +229,53 @@ export COGNITO_CLIENT_SECRET="your-cognito-client-secret"
 
 ## デプロイメント
 
-このエージェントはAmazon Bedrock AgentCore Runtime上でのデプロイを想定しています。デプロイ前にMCP GatewayとCognitoリソースが適切に設定されていることを確認してください。
+### ローカル開発環境
+
+```bash
+# AgentCore開発サーバーを起動
+./start_agentcore_dev.sh
+
+# 別ターミナルでテスト
+source venv/bin/activate
+agentcore invoke --dev "こんにちは"
+```
+
+### AWSへのデプロイ
+
+```bash
+# AWSにデプロイ
+./deploy_to_aws.sh
+
+# デプロイ状態確認
+python check_deployment_status.py
+
+# デプロイ済みエージェントのテスト
+python manual_test_deployed_agent.py
+```
+
+### デプロイ後の確認
+
+1. **エージェント状態確認**
+   ```bash
+   python check_deployment_status.py
+   ```
+
+2. **手動テスト実行**
+   ```bash
+   python manual_test_deployed_agent.py
+   ```
+
+3. **HealthMate UIからの呼び出し**
+   - UIでCognito認証を実行
+   - JWTトークンがエージェントに自動的に渡される
+   - エージェントがユーザーIDを自動抽出して動作
+
+### デプロイ要件
+
+- Amazon Bedrock AgentCore Runtime環境
+- MCP Gatewayスタックのデプロイ完了
+- Cognitoユーザープールの設定完了
+- 適切なIAMロールとポリシーの設定
 
 ## ライセンス
 

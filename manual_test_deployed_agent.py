@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-HealthCoachAI ローカル手動テストプログラム
+HealthCoachAI デプロイ済みエージェント手動テストプログラム
 
-ローカル環境でHealthCoachAIエージェントを
+AWSにデプロイされたHealthCoachAIエージェントを
 ターミナル上でプロンプト入力による手動テストを行います。
+JWTアクセストークンを使用してAgentCore Runtimeを直接呼び出します。
 """
 
 import asyncio
@@ -15,58 +16,25 @@ import base64
 import json
 import sys
 import readline
+import subprocess
+import tempfile
+import os
 from botocore.exceptions import ClientError
-from health_coach_ai.agent import invoke_health_coach
+from test_config_helper import test_config
 
 
-class LocalTestSession:
-    """ローカル手動テスト用セッションクラス"""
+class DeployedAgentTestSession:
+    """デプロイ済みエージェント手動テスト用セッションクラス"""
     
     def __init__(self):
         """セッション初期化"""
-        # CloudFormationから設定を取得
-        self.config = self._get_config_from_cloudformation()
+        self.config = test_config.get_all_config()
         self.cognito_client = boto3.client('cognito-idp', region_name=self.config['region'])
         self.test_username = None
         self.jwt_token = None
         self.session_active = False
         self.conversation_count = 0
-    
-    def _get_config_from_cloudformation(self) -> dict:
-        """CloudFormationスタックから設定を取得"""
-        try:
-            stack_name = 'HealthManagerMCPStack'  # デフォルトスタック名
-            region = 'us-west-2'
-            
-            cfn = boto3.client('cloudformation', region_name=region)
-            response = cfn.describe_stacks(StackName=stack_name)
-            
-            if not response['Stacks']:
-                raise Exception(f"CloudFormationスタック '{stack_name}' が見つかりません")
-            
-            outputs = {}
-            for output in response['Stacks'][0].get('Outputs', []):
-                outputs[output['OutputKey']] = output['OutputValue']
-            
-            # Cognito Client Secretを取得
-            cognito_client = boto3.client('cognito-idp', region_name=region)
-            client_response = cognito_client.describe_user_pool_client(
-                UserPoolId=outputs['UserPoolId'],
-                ClientId=outputs['UserPoolClientId']
-            )
-            client_secret = client_response['UserPoolClient']['ClientSecret']
-            
-            return {
-                'region': region,
-                'user_pool_id': outputs['UserPoolId'],
-                'client_id': outputs['UserPoolClientId'],
-                'client_secret': client_secret,
-                'gateway_id': outputs['GatewayId']
-            }
-            
-        except Exception as e:
-            print(f"❌ CloudFormation設定取得エラー: {e}")
-            sys.exit(1)
+        self.jwt_token_file = None
     
     def calculate_secret_hash(self, username: str) -> str:
         """Cognito Client Secret Hash を計算"""
@@ -99,13 +67,37 @@ class LocalTestSession:
             print(f"JWT デコードエラー: {e}")
             return {}
     
+    async def check_agent_status(self):
+        """デプロイされたエージェントの状態を確認"""
+        try:
+            print("🔍 デプロイされたエージェント状態を確認中...")
+            
+            # AgentCore CLIを使用してステータス確認
+            result = subprocess.run(
+                ['agentcore', 'status'],
+                capture_output=True,
+                text=True,
+                cwd=os.getcwd()
+            )
+            
+            if result.returncode == 0:
+                print("   ✅ health_coach_ai エージェントが正常にデプロイされています")
+                return True
+            else:
+                print(f"   ❌ エージェント状態確認エラー: {result.stderr}")
+                return False
+            
+        except Exception as e:
+            print(f"❌ エージェント状態確認エラー: {e}")
+            return False
+    
     async def setup_authentication(self):
         """認証セットアップ"""
         print("🔐 認証セットアップ中...")
         
         # ランダムなテストユーザー名を生成
-        self.test_username = f"local_test_{uuid.uuid4().hex[:8]}"
-        test_password = "LocalTest123!"
+        self.test_username = f"deployed_test_{uuid.uuid4().hex[:8]}"
+        test_password = "DeployedTest123!"
         test_email = f"{self.test_username}@example.com"
         
         try:
@@ -146,6 +138,11 @@ class LocalTestSession:
             self.jwt_token = response['AuthenticationResult']['AccessToken']
             self.session_active = True
             
+            # JWTトークンを一時ファイルに保存
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.jwt') as f:
+                f.write(self.jwt_token)
+                self.jwt_token_file = f.name
+            
             # JWTトークンからユーザーIDを取得して表示
             payload = self._decode_jwt_payload(self.jwt_token)
             user_id = payload.get('sub')
@@ -156,6 +153,8 @@ class LocalTestSession:
             print(f"   JWT Token: {self.jwt_token[:50]}...")
             print(f"   テストユーザー: {self.test_username}")
             print(f"   🔑 デコードしたユーザーID (sub): {user_id}")
+            print(f"   📊 DynamoDB確認用ユーザーID: {user_id}")
+            print(f"   💾 JWTトークンファイル: {self.jwt_token_file}")
             
             return True
             
@@ -175,41 +174,156 @@ class LocalTestSession:
             except Exception as e:
                 print(f"   ⚠️  ユーザー削除エラー: {e}")
         
+        # JWTトークンファイルを削除
+        if self.jwt_token_file and os.path.exists(self.jwt_token_file):
+            try:
+                os.remove(self.jwt_token_file)
+                print(f"   ✅ JWTトークンファイル削除: {self.jwt_token_file}")
+            except Exception as e:
+                print(f"   ⚠️  JWTトークンファイル削除エラー: {e}")
+        
         self.session_active = False
         self.jwt_token = None
         self.test_username = None
         self.conversation_count = 0
+        self.jwt_token_file = None
+    
+    async def test_agent_query_streaming(self, query: str):
+        """デプロイされたエージェントにクエリを送信（ストリーミング対応）"""
+        if not self.session_active or not self.jwt_token or not self.jwt_token_file:
+            print("❌ セッションまたはJWTトークンが無効です。")
+            return
+        
+        try:
+            self.conversation_count += 1
+            
+            # JWTトークンをペイロードに直接含める
+            payload = json.dumps({
+                "prompt": query,
+                "jwt_token": self.jwt_token,
+                "sessionState": {
+                    "sessionAttributes": {
+                        "jwt_token": self.jwt_token
+                    }
+                }
+            })
+            
+            # ストリーミング対応のsubprocessを開始
+            process = subprocess.Popen([
+                'agentcore', 'invoke',
+                payload
+            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
+               text=True, cwd=os.getcwd(), bufsize=1, universal_newlines=True)
+            
+            print("\n💬 HealthCoachAI (Deployed) の回答:")
+            print("-" * 60)
+            
+            response_text = ""
+            
+            # リアルタイムで出力を処理
+            try:
+                while True:
+                    line = process.stdout.readline()
+                    if not line and process.poll() is not None:
+                        break
+                    
+                    if line.strip():
+                        try:
+                            event = json.loads(line.strip())
+                            if 'event' in event and 'contentBlockDelta' in event['event']:
+                                delta = event['event']['contentBlockDelta'].get('delta', {})
+                                if 'text' in delta:
+                                    text_chunk = delta['text']
+                                    print(text_chunk, end='', flush=True)  # リアルタイム出力
+                                    response_text += text_chunk
+                        except json.JSONDecodeError:
+                            # JSON以外の行はスキップ
+                            continue
+                
+                # プロセス終了を待機（タイムアウト付き）
+                try:
+                    process.wait(timeout=60)  # 60秒でタイムアウト
+                except subprocess.TimeoutExpired:
+                    print("\n⚠️  応答がタイムアウトしました。プロセスを終了します...")
+                    process.kill()
+                    process.wait()
+                    
+            except KeyboardInterrupt:
+                print("\n\n⚠️  ユーザーによって中断されました。プロセスを終了します...")
+                process.kill()
+                process.wait()
+            
+            print()  # 改行
+            print("-" * 60)
+            
+            if process.returncode != 0:
+                stderr_output = process.stderr.read()
+                print(f"❌ AgentCore CLI呼び出しエラー: {stderr_output}")
+            elif not response_text:
+                print("⚠️  エージェントからの応答を取得できませんでした。")
+        
+        except Exception as e:
+            print(f"❌ デプロイ済みエージェント呼び出しエラー: {e}")
     
     async def test_agent_query(self, query: str) -> str:
-        """ローカルエージェントにクエリを送信"""
-        if not self.session_active or not self.jwt_token:
+        """デプロイされたエージェントにクエリを送信（非ストリーミング・互換性用）"""
+        if not self.session_active or not self.jwt_token or not self.jwt_token_file:
             return "❌ セッションまたはJWTトークンが無効です。"
         
         try:
             self.conversation_count += 1
             
-            # グローバル変数にJWTトークンを設定（エージェントが使用するため）
-            import health_coach_ai.agent as agent_module
-            agent_module._current_jwt_token = self.jwt_token
+            # JWTトークンをペイロードに直接含める
+            payload = json.dumps({
+                "prompt": query,
+                "jwt_token": self.jwt_token,
+                "sessionState": {
+                    "sessionAttributes": {
+                        "jwt_token": self.jwt_token
+                    }
+                }
+            })
             
-            # ローカルエージェントを呼び出し
-            response = await invoke_health_coach(query)
+            result = subprocess.run([
+                'agentcore', 'invoke',
+                payload
+            ], capture_output=True, text=True, cwd=os.getcwd())
             
-            return response
+            if result.returncode == 0:
+                # 出力からJSONイベントを抽出してテキストを組み立て
+                response_text = ""
+                lines = result.stdout.strip().split('\n')
+                
+                for line in lines:
+                    if line.strip():
+                        try:
+                            event = json.loads(line)
+                            if 'event' in event and 'contentBlockDelta' in event['event']:
+                                delta = event['event']['contentBlockDelta'].get('delta', {})
+                                if 'text' in delta:
+                                    response_text += delta['text']
+                        except json.JSONDecodeError:
+                            # JSON以外の行はスキップ
+                            continue
+                
+                return response_text or "エージェントからの応答を取得できませんでした。"
+            else:
+                return f"❌ AgentCore CLI呼び出しエラー: {result.stderr}"
         
         except Exception as e:
-            return f"❌ ローカルエージェント呼び出しエラー: {e}"
+            return f"❌ デプロイ済みエージェント呼び出しエラー: {e}"
 
 
 def print_banner():
     """バナー表示"""
     print("=" * 80)
-    print("🧪 HealthCoachAI ローカル手動テストプログラム")
+    print("🚀 HealthCoachAI デプロイ済みエージェント手動テストプログラム")
     print("=" * 80)
     print()
-    print("このプログラムでは、ローカル環境でHealthCoachAIエージェントを")
+    print("このプログラムでは、AWSにデプロイされたHealthCoachAIエージェントを")
     print("手動でテストできます。JWTトークンは自動生成され、")
-    print("実際のMCP Gatewayと連携します。")
+    print("実際のAgentCore Runtime環境と連携します。")
+    print("📡 リアルタイムストリーミング対応で、エージェントの応答が即座に表示されます。")
     print()
 
 
@@ -286,9 +400,14 @@ def print_help():
     print("  新規ユーザーを作成してください")
     print("  健康目標を設定したいです")
     print()
-    print("🧪 ローカル環境:")
-    print("  このプログラムはローカルでエージェントを実行します")
-    print("  MCP Gatewayとの通信は実際のAWSリソースを使用します")
+    print("🚀 デプロイ環境:")
+    print("  このプログラムはAWSにデプロイされたエージェントをテストします")
+    print("  AgentCore Runtime環境で実際に動作するエージェントと通信します")
+    print("  📡 リアルタイムストリーミング対応 - エージェントの応答が即座に表示されます")
+    print()
+    print("📊 DynamoDB確認:")
+    print("  'status' コマンドでユーザーID (sub) を確認できます")
+    print("  このIDでDynamoDBテーブル内のデータを検索してください")
     print()
 
 
@@ -297,10 +416,19 @@ async def main():
     print_banner()
     
     # セッション初期化
-    session = LocalTestSession()
+    session = DeployedAgentTestSession()
+    
+    # エージェント状態を確認
+    print("🔍 デプロイされたエージェント状態を確認中...")
+    agent_status_success = await session.check_agent_status()
+    
+    if not agent_status_success:
+        print("❌ エージェント状態の確認に失敗しました。")
+        print("   health_coach_ai エージェントがAWSにデプロイされていることを確認してください。")
+        return
     
     # 初回認証
-    print("🚀 初期認証を実行します...")
+    print("\n🚀 初期認証を実行します...")
     auth_success = await session.setup_authentication()
     
     if not auth_success:
@@ -308,7 +436,7 @@ async def main():
         return
     
     print()
-    print("✅ 認証完了！ローカルHealthCoachAIエージェントとの対話を開始できます。")
+    print("✅ 認証完了！デプロイされたHealthCoachAIエージェントとの対話を開始できます。")
     print("   'help' でコマンド一覧を表示できます。")
     print("   📊 'status' コマンドでユーザーIDを再確認できます。")
     print("   ⌨️  複数行入力可能（空行で実行）")
@@ -318,7 +446,7 @@ async def main():
         while True:
             try:
                 # マルチライン入力を取得
-                user_input = get_multiline_input("🧪 HealthCoachAI (Local)> ").strip()
+                user_input = get_multiline_input("🚀 HealthCoachAI (Deployed)> ").strip()
             except (EOFError, KeyboardInterrupt):
                 print("\n👋 プログラムを終了します...")
                 break
@@ -347,6 +475,7 @@ async def main():
                 print(f"   認証状態: {'✅ 有効' if session.session_active else '❌ 無効'}")
                 print(f"   テストユーザー: {session.test_username or 'なし'}")
                 print(f"   JWT Token: {'✅ 有効' if session.jwt_token else '❌ なし'}")
+                print(f"   JWTトークンファイル: {session.jwt_token_file or 'なし'}")
                 print(f"   会話回数: {session.conversation_count}")
                 
                 # 現在のユーザーIDを表示
@@ -354,6 +483,7 @@ async def main():
                     payload = session._decode_jwt_payload(session.jwt_token)
                     user_id = payload.get('sub')
                     print(f"   🔑 現在のユーザーID (sub): {user_id}")
+                    print(f"   📊 DynamoDB確認用: {user_id}")
                 
                 print()
                 continue
@@ -369,14 +499,9 @@ async def main():
                 print()
                 continue
             
-            # ローカルエージェントにクエリを送信
-            print("\n🤔 ローカルエージェントに送信中...")
-            response = await session.test_agent_query(user_input)
-            
-            print("\n💬 HealthCoachAI (Local) の回答:")
-            print("-" * 60)
-            print(response)
-            print("-" * 60)
+            # デプロイされたエージェントにクエリを送信（ストリーミング）
+            print("\n🤔 デプロイされたエージェント (AgentCore Runtime) に送信中...")
+            await session.test_agent_query_streaming(user_input)
             print()
     
     finally:

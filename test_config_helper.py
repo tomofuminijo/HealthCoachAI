@@ -1,49 +1,44 @@
 #!/usr/bin/env python3
 """
-テスト用CloudFormation設定ヘルパー
+テスト用設定ヘルパー
 
-CloudFormationスタックからCognito設定を動的に取得します。
+CloudFormationスタックから動的に設定を取得し、
+テストファイルで共通利用できるようにします。
 """
 
-import os
 import boto3
-from typing import Optional
+import json
 from botocore.exceptions import ClientError
 
 
-class TestConfigHelper:
-    """テスト用CloudFormation設定取得クラス"""
+class TestConfig:
+    """テスト用設定管理クラス"""
     
     def __init__(self):
-        self._region: Optional[str] = None
-        self._user_pool_id: Optional[str] = None
-        self._client_id: Optional[str] = None
-        self._client_secret: Optional[str] = None
-        self._stack_outputs: Optional[dict] = None
+        self._config = None
     
     def _get_stack_name(self) -> str:
-        """スタック名を環境変数またはデフォルト値から取得"""
+        """CloudFormationスタック名を取得"""
+        import os
         return os.environ.get('HEALTH_STACK_NAME', 'HealthManagerMCPStack')
     
     def _get_region(self) -> str:
         """AWSリージョンを取得"""
-        if self._region is None:
-            self._region = (
-                os.environ.get('AWS_REGION') or 
-                os.environ.get('AWS_DEFAULT_REGION') or
-                boto3.Session().region_name or
-                'us-west-2'
-            )
-        return self._region
+        import os
+        return (
+            os.environ.get('AWS_REGION') or 
+            os.environ.get('AWS_DEFAULT_REGION') or
+            boto3.Session().region_name or
+            'us-west-2'
+        )
     
-    def _fetch_cloudformation_outputs(self) -> dict:
-        """CloudFormationスタックの出力を取得（キャッシュ付き）"""
-        if self._stack_outputs is not None:
-            return self._stack_outputs
-        
+    def _fetch_cloudformation_config(self) -> dict:
+        """CloudFormationスタックから設定を取得"""
         try:
             stack_name = self._get_stack_name()
             region = self._get_region()
+            
+            print(f"CloudFormation設定取得中: スタック={stack_name}, リージョン={region}")
             
             cfn = boto3.client('cloudformation', region_name=region)
             response = cfn.describe_stacks(StackName=stack_name)
@@ -55,71 +50,82 @@ class TestConfigHelper:
             for output in response['Stacks'][0].get('Outputs', []):
                 outputs[output['OutputKey']] = output['OutputValue']
             
-            self._stack_outputs = outputs
-            return outputs
+            print(f"CloudFormation出力: {list(outputs.keys())}")
+            
+            # 必要な出力が存在するかチェック
+            required_outputs = ['UserPoolId', 'UserPoolClientId', 'GatewayId']
+            missing_outputs = [key for key in required_outputs if key not in outputs]
+            if missing_outputs:
+                raise Exception(f"必要なCloudFormation出力が見つかりません: {missing_outputs}")
+            
+            # Cognito Client Secretを取得
+            cognito_client = boto3.client('cognito-idp', region_name=region)
+            client_response = cognito_client.describe_user_pool_client(
+                UserPoolId=outputs['UserPoolId'],
+                ClientId=outputs['UserPoolClientId']
+            )
+            client_secret = client_response['UserPoolClient']['ClientSecret']
+            
+            config = {
+                'region': region,
+                'user_pool_id': outputs['UserPoolId'],
+                'client_id': outputs['UserPoolClientId'],
+                'client_secret': client_secret,
+                'gateway_id': outputs['GatewayId']
+            }
+            
+            print("✅ CloudFormation設定取得完了")
+            return config
             
         except Exception as e:
-            print(f"CloudFormation設定取得エラー（デフォルト値を使用）: {e}")
-            # 環境変数からデフォルト値を取得
-            self._stack_outputs = {
-                'UserPoolId': os.environ.get('COGNITO_USER_POOL_ID', 'CONFIGURE_USER_POOL_ID'),
-                'UserPoolClientId': os.environ.get('COGNITO_CLIENT_ID', 'CONFIGURE_CLIENT_ID'),
-                'Region': self._get_region()
-            }
-            return self._stack_outputs
-    
-    def get_region(self) -> str:
-        """リージョンを取得"""
-        return self._get_region()
-    
-    def get_user_pool_id(self) -> str:
-        """Cognito User Pool IDを取得"""
-        if self._user_pool_id is None:
-            outputs = self._fetch_cloudformation_outputs()
-            self._user_pool_id = outputs.get('UserPoolId', os.environ.get('COGNITO_USER_POOL_ID', 'CONFIGURE_USER_POOL_ID'))
-        return self._user_pool_id
-    
-    def get_client_id(self) -> str:
-        """Cognito Client IDを取得"""
-        if self._client_id is None:
-            outputs = self._fetch_cloudformation_outputs()
-            self._client_id = outputs.get('UserPoolClientId', os.environ.get('COGNITO_CLIENT_ID', 'CONFIGURE_CLIENT_ID'))
-        return self._client_id
-    
-    def get_client_secret(self) -> str:
-        """Cognito Client SecretをSDKで取得"""
-        if self._client_secret is None:
-            try:
-                region = self.get_region()
-                user_pool_id = self.get_user_pool_id()
-                client_id = self.get_client_id()
-                
-                cognito = boto3.client('cognito-idp', region_name=region)
-                response = cognito.describe_user_pool_client(
-                    UserPoolId=user_pool_id,
-                    ClientId=client_id
-                )
-                
-                self._client_secret = response['UserPoolClient']['ClientSecret']
-                
-            except ClientError as e:
-                print(f"Cognito Client Secret取得エラー: {e}")
-                # 環境変数から取得を試行
-                self._client_secret = os.environ.get('COGNITO_CLIENT_SECRET')
-                if not self._client_secret:
-                    raise Exception("Cognito Client Secretが取得できません。環境変数COGNITO_CLIENT_SECRETを設定するか、CloudFormationスタックを確認してください。")
-            
-        return self._client_secret
+            print(f"❌ CloudFormation設定取得エラー: {e}")
+            raise
     
     def get_all_config(self) -> dict:
-        """全ての設定を辞書で取得"""
+        """すべての設定を取得（キャッシュ付き）"""
+        if self._config is None:
+            self._config = self._fetch_cloudformation_config()
+        return self._config
+    
+    def get_cognito_config(self) -> dict:
+        """Cognito設定のみを取得"""
+        config = self.get_all_config()
         return {
-            'region': self.get_region(),
-            'user_pool_id': self.get_user_pool_id(),
-            'client_id': self.get_client_id(),
-            'client_secret': self.get_client_secret()
+            'region': config['region'],
+            'user_pool_id': config['user_pool_id'],
+            'client_id': config['client_id'],
+            'client_secret': config['client_secret']
+        }
+    
+    def get_gateway_config(self) -> dict:
+        """Gateway設定のみを取得"""
+        config = self.get_all_config()
+        return {
+            'region': config['region'],
+            'gateway_id': config['gateway_id']
         }
 
 
 # グローバルインスタンス
-test_config = TestConfigHelper()
+test_config = TestConfig()
+
+
+if __name__ == "__main__":
+    """設定テスト用のメイン関数"""
+    try:
+        print("🔧 テスト設定を確認中...")
+        config = test_config.get_all_config()
+        
+        print("\n📋 取得した設定:")
+        print(f"   リージョン: {config['region']}")
+        print(f"   User Pool ID: {config['user_pool_id']}")
+        print(f"   Client ID: {config['client_id']}")
+        print(f"   Client Secret: {config['client_secret'][:10]}...")
+        print(f"   Gateway ID: {config['gateway_id']}")
+        
+        print("\n✅ 設定取得テスト完了")
+        
+    except Exception as e:
+        print(f"\n❌ 設定取得テストエラー: {e}")
+        import traceback
+        traceback.print_exc()

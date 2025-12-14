@@ -1,0 +1,17 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "cloudformation:DescribeStacks",
+                "cloudformation:DescribeStackResources",
+                "cloudformation:DescribeStackEvents",
+                "cloudformation:GetStackPolicy",
+                "cloudformation:ListStacks",
+                "cloudformation:ListStackResources"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
