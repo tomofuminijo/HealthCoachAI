@@ -4,7 +4,7 @@ HealthCoachAI デプロイ済みエージェント手動テストプログラム
 
 AWSにデプロイされたHealthCoachAIエージェントを
 ターミナル上でプロンプト入力による手動テストを行います。
-JWTアクセストークンを使用してAgentCore Runtimeを直接呼び出します。
+JWTアクセストークンを使用してboto3 bedrock-agentcoreクライアントで直接呼び出します。
 """
 
 import asyncio
@@ -16,9 +16,9 @@ import base64
 import json
 import sys
 import readline
-import subprocess
 import tempfile
 import os
+import yaml
 from botocore.exceptions import ClientError
 from test_config_helper import test_config
 
@@ -28,11 +28,11 @@ from test_config_helper import test_config
 
 # タイムゾーン設定
 # 例: 'Asia/Tokyo', 'America/New_York', 'Europe/London', 'America/Los_Angeles'
-TEST_TIMEZONE = 'Euro/London'
+TEST_TIMEZONE = 'Asia/Tokyo'
 
 # 言語設定  
 # 例: 'ja', 'en', 'en-us', 'zh', 'ko', 'es', 'fr', 'de'
-TEST_LANGUAGE = 'en'
+TEST_LANGUAGE = 'ja'
 
 # ========================================
 
@@ -44,11 +44,13 @@ class DeployedAgentTestSession:
         """セッション初期化"""
         self.config = test_config.get_all_config()
         self.cognito_client = boto3.client('cognito-idp', region_name=self.config['region'])
+        self.agentcore_client = boto3.client('bedrock-agentcore', region_name=self.config['region'])
         self.test_username = None
         self.jwt_token = None
         self.session_active = False
         self.conversation_count = 0
         self.jwt_token_file = None
+        self.agent_runtime_arn = None
     
     def calculate_secret_hash(self, username: str) -> str:
         """Cognito Client Secret Hash を計算"""
@@ -81,25 +83,45 @@ class DeployedAgentTestSession:
             print(f"JWT デコードエラー: {e}")
             return {}
     
+    def _load_agent_runtime_arn(self):
+        """AgentCore設定ファイルからAgent Runtime ARNを取得"""
+        try:
+            config_file = '.bedrock_agentcore.yaml'
+            if not os.path.exists(config_file):
+                raise FileNotFoundError(f"AgentCore設定ファイル '{config_file}' が見つかりません")
+            
+            with open(config_file, 'r', encoding='utf-8') as f:
+                agentcore_config = yaml.safe_load(f)
+            
+            # health_coach_ai エージェントのARNを取得
+            agents = agentcore_config.get('agents', {})
+            health_coach_ai = agents.get('health_coach_ai', {})
+            bedrock_agentcore = health_coach_ai.get('bedrock_agentcore', {})
+            agent_arn = bedrock_agentcore.get('agent_arn')
+            
+            if not agent_arn:
+                raise ValueError("Agent Runtime ARNが設定ファイルに見つかりません")
+            
+            self.agent_runtime_arn = agent_arn
+            print(f"   ✅ Agent Runtime ARN: {agent_arn}")
+            return True
+            
+        except Exception as e:
+            print(f"   ❌ Agent Runtime ARN取得エラー: {e}")
+            return False
+
     async def check_agent_status(self):
         """デプロイされたエージェントの状態を確認"""
         try:
             print("🔍 デプロイされたエージェント状態を確認中...")
             
-            # AgentCore CLIを使用してステータス確認
-            result = subprocess.run(
-                ['agentcore', 'status'],
-                capture_output=True,
-                text=True,
-                cwd=os.getcwd()
-            )
-            
-            if result.returncode == 0:
-                print("   ✅ health_coach_ai エージェントが正常にデプロイされています")
-                return True
-            else:
-                print(f"   ❌ エージェント状態確認エラー: {result.stderr}")
+            # Agent Runtime ARNを取得
+            if not self._load_agent_runtime_arn():
                 return False
+            
+            # Agent Runtime ARNが取得できれば、エージェントは利用可能と判断
+            print("   ✅ health_coach_ai エージェントのRuntime ARNが確認できました")
+            return True
             
         except Exception as e:
             print(f"❌ エージェント状態確認エラー: {e}")
@@ -204,7 +226,7 @@ class DeployedAgentTestSession:
     
     async def test_agent_query_streaming(self, query: str):
         """デプロイされたエージェントにクエリを送信（ストリーミング対応）"""
-        if not self.session_active or not self.jwt_token or not self.jwt_token_file:
+        if not self.session_active or not self.jwt_token or not self.agent_runtime_arn:
             print("❌ セッションまたはJWTトークンが無効です。")
             return
         
@@ -212,7 +234,7 @@ class DeployedAgentTestSession:
             self.conversation_count += 1
             
             # JWTトークン、タイムゾーン、言語をペイロードに含める
-            payload = json.dumps({
+            payload = {
                 "prompt": query,
                 "jwt_token": self.jwt_token,
                 "timezone": TEST_TIMEZONE,
@@ -224,77 +246,86 @@ class DeployedAgentTestSession:
                         "language": TEST_LANGUAGE
                     }
                 }
-            })
+            }
             
-            print(f"DEBUG: Setting timezone: {TEST_TIMEZONE}, language: {TEST_LANGUAGE}")
-            
-            # ストリーミング対応のsubprocessを開始
-            process = subprocess.Popen([
-                'agentcore', 'invoke',
-                payload
-            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
-               text=True, cwd=os.getcwd(), bufsize=1, universal_newlines=True)
-            
+
             print("\n💬 HealthCoachAI (Deployed) の回答:")
             print("-" * 60)
             
+            # boto3 bedrock-agentcore クライアントを使用してエージェントを呼び出し
+            response = self.agentcore_client.invoke_agent_runtime(
+                agentRuntimeArn=self.agent_runtime_arn,
+                payload=json.dumps(payload)
+            )
+            
+            # ストリーミングレスポンスを処理
             response_text = ""
             
-            # リアルタイムで出力を処理
             try:
-                while True:
-                    line = process.stdout.readline()
-                    if not line and process.poll() is not None:
-                        break
-                    
-                    if line.strip():
-                        try:
-                            event = json.loads(line.strip())
-                            if 'event' in event and 'contentBlockDelta' in event['event']:
-                                delta = event['event']['contentBlockDelta'].get('delta', {})
-                                if 'text' in delta:
-                                    text_chunk = delta['text']
-                                    print(text_chunk, end='', flush=True)  # リアルタイム出力
-                                    response_text += text_chunk
-                        except json.JSONDecodeError:
-                            # JSON以外の行はスキップ
-                            continue
+                # ストリーミングレスポンスを逐次処理
+                stream = response["response"]
+                buffer = ""
                 
-                # プロセス終了を待機（タイムアウト付き）
-                try:
-                    process.wait(timeout=60)  # 60秒でタイムアウト
-                except subprocess.TimeoutExpired:
-                    print("\n⚠️  応答がタイムアウトしました。プロセスを終了します...")
-                    process.kill()
-                    process.wait()
+                # チャンクごとに読み取り
+                while True:
+                    try:
+                        chunk = stream.read(1024)  # 1KBずつ読み取り
+                        if not chunk:
+                            break
+                        
+                        # バッファに追加
+                        buffer += chunk.decode('utf-8', errors='ignore')
+                        
+                        # 完全な行を処理
+                        while '\n' in buffer:
+                            line, buffer = buffer.split('\n', 1)
+                            
+                            if line.startswith('data: '):
+                                try:
+                                    data_json = line[6:]  # "data: " を除去
+                                    if data_json.strip():
+                                        event_data = json.loads(data_json)
+                                        
+                                        # contentBlockDelta イベントからテキストを抽出
+                                        if 'event' in event_data and 'contentBlockDelta' in event_data['event']:
+                                            delta = event_data['event']['contentBlockDelta'].get('delta', {})
+                                            if 'text' in delta:
+                                                text_chunk = delta['text']
+                                                print(text_chunk, end='', flush=True)
+                                                response_text += text_chunk
+                                except json.JSONDecodeError:
+                                    continue
+                    except Exception as e:
+                        # ストリーム終了またはエラー
+                        break
+                
+                if not response_text:
+                    print("⚠️  エージェントからの応答を取得できませんでした。")
                     
             except KeyboardInterrupt:
-                print("\n\n⚠️  ユーザーによって中断されました。プロセスを終了します...")
-                process.kill()
-                process.wait()
+                print("\n\n⚠️  ユーザーによって中断されました。")
             
             print()  # 改行
             print("-" * 60)
             
-            if process.returncode != 0:
-                stderr_output = process.stderr.read()
-                print(f"❌ AgentCore CLI呼び出しエラー: {stderr_output}")
-            elif not response_text:
+            if not response_text:
                 print("⚠️  エージェントからの応答を取得できませんでした。")
         
         except Exception as e:
             print(f"❌ デプロイ済みエージェント呼び出しエラー: {e}")
+            import traceback
+            traceback.print_exc()
     
     async def test_agent_query(self, query: str) -> str:
         """デプロイされたエージェントにクエリを送信（非ストリーミング・互換性用）"""
-        if not self.session_active or not self.jwt_token or not self.jwt_token_file:
+        if not self.session_active or not self.jwt_token or not self.agent_runtime_arn:
             return "❌ セッションまたはJWTトークンが無効です。"
         
         try:
             self.conversation_count += 1
             
             # JWTトークン、タイムゾーン、言語をペイロードに含める
-            payload = json.dumps({
+            payload = {
                 "prompt": query,
                 "jwt_token": self.jwt_token,
                 "timezone": TEST_TIMEZONE,
@@ -306,33 +337,41 @@ class DeployedAgentTestSession:
                         "language": TEST_LANGUAGE
                     }
                 }
-            })
+            }
             
-            result = subprocess.run([
-                'agentcore', 'invoke',
-                payload
-            ], capture_output=True, text=True, cwd=os.getcwd())
+            # boto3 bedrock-agentcore クライアントを使用してエージェントを呼び出し
+            response = self.agentcore_client.invoke_agent_runtime(
+                agentRuntimeArn=self.agent_runtime_arn,
+                payload=json.dumps(payload)
+            )
             
-            if result.returncode == 0:
-                # 出力からJSONイベントを抽出してテキストを組み立て
+            # レスポンスボディを読み取り
+            response_body = response["response"].read()
+            
+            if response_body:
+                response_text_raw = response_body.decode('utf-8', errors='ignore')
                 response_text = ""
-                lines = result.stdout.strip().split('\n')
                 
+                # SSE形式のデータを行ごとに処理
+                lines = response_text_raw.split('\n')
                 for line in lines:
-                    if line.strip():
+                    if line.startswith('data: '):
                         try:
-                            event = json.loads(line)
-                            if 'event' in event and 'contentBlockDelta' in event['event']:
-                                delta = event['event']['contentBlockDelta'].get('delta', {})
-                                if 'text' in delta:
-                                    response_text += delta['text']
+                            data_json = line[6:]  # "data: " を除去
+                            if data_json.strip():
+                                event_data = json.loads(data_json)
+                                
+                                # contentBlockDelta イベントからテキストを抽出
+                                if 'event' in event_data and 'contentBlockDelta' in event_data['event']:
+                                    delta = event_data['event']['contentBlockDelta'].get('delta', {})
+                                    if 'text' in delta:
+                                        response_text += delta['text']
                         except json.JSONDecodeError:
-                            # JSON以外の行はスキップ
                             continue
                 
                 return response_text or "エージェントからの応答を取得できませんでした。"
-            else:
-                return f"❌ AgentCore CLI呼び出しエラー: {result.stderr}"
+            
+            return "エージェントからの応答を取得できませんでした。"
         
         except Exception as e:
             return f"❌ デプロイ済みエージェント呼び出しエラー: {e}"
@@ -346,8 +385,8 @@ def print_banner():
     print()
     print("このプログラムでは、AWSにデプロイされたHealthCoachAIエージェントを")
     print("手動でテストできます。JWTトークンは自動生成され、")
-    print("実際のAgentCore Runtime環境と連携します。")
-    print("📡 リアルタイムストリーミング対応で、エージェントの応答が即座に表示されます。")
+    print("boto3 bedrock-agentcore クライアントで直接AgentCore Runtime環境と連携します。")
+    print("� リboto3統合により、安定したエージェント呼び出しを実現します。")
     print()
     print(f"🌍 テスト設定:")
     print(f"   タイムゾーン: {TEST_TIMEZONE}")
@@ -431,7 +470,7 @@ def print_help():
     print("🚀 デプロイ環境:")
     print("  このプログラムはAWSにデプロイされたエージェントをテストします")
     print("  AgentCore Runtime環境で実際に動作するエージェントと通信します")
-    print("  📡 リアルタイムストリーミング対応 - エージェントの応答が即座に表示されます")
+    print("  � boルto3 bedrock-agentcore クライアント統合 - 安定したAPI呼び出し")
     print()
     print("📊 DynamoDB確認:")
     print("  'status' コマンドでユーザーID (sub) を確認できます")
