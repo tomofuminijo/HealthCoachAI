@@ -1,8 +1,8 @@
-# HealthCoachAI サービス
+# Healthmate-CoachAI サービス
 
 ## Service Overview
 
-HealthCoachAI サービスは、Healthmate プロダクトのAI健康コーチを担当するエージェントです。Amazon Bedrock AgentCore Runtime上で動作し、ユーザーにパーソナライズされた健康アドバイスを提供します。
+Healthmate-CoachAI サービスは、Healthmate プロダクトのAI健康コーチを担当するエージェントです。Amazon Bedrock AgentCore Runtime上で動作し、ユーザーにパーソナライズされた健康アドバイスを提供します。
 
 ### Primary Responsibilities
 
@@ -77,7 +77,7 @@ def _get_config_from_cloudformation() -> dict:
 ```
 
 #### Custom IAM Role
-- **Role Name**: `HealthCoachAI-AgentCore-Runtime-Role`
+- **Role Name**: `Healthmate-CoachAI-AgentCore-Runtime-Role`
 - **Permissions**: AgentCore Runtime + CloudFormation read + Cognito read
 
 #### Testing Strategy
