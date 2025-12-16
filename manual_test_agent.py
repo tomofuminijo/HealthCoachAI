@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-HealthCoachAI ローカル手動テストプログラム
+Healthmate-CoachAI ローカル手動テストプログラム
 
-ローカル環境でHealthCoachAIエージェントを
+ローカル環境でHealthmate-CoachAIエージェントを
 ターミナル上でプロンプト入力による手動テストを行います。
 """
 
@@ -17,7 +17,7 @@ import sys
 import os
 import readline
 from botocore.exceptions import ClientError
-from health_coach_ai.agent import invoke_health_coach
+from healthmate_coach_ai.agent import invoke_health_coach
 
 # ========================================
 # テスト設定（ここで変更可能）

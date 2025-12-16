@@ -2,7 +2,7 @@
 """
 AgentCore Memory統合テスト
 
-このスクリプトは、HealthCoachAI サービスのAgentCore Memory統合が
+このスクリプトは、Healthmate-CoachAI サービスのAgentCore Memory統合が
 正しく動作することを確認します。
 
 テスト内容:
@@ -15,7 +15,7 @@ import asyncio
 import json
 import uuid
 from datetime import datetime
-from health_coach_ai.agent import invoke_health_coach
+from healthmate_coach_ai.agent import invoke_health_coach
 
 
 async def test_memory_integration():

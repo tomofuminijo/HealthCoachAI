@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-HealthCoachAI デプロイ済みエージェント手動テストプログラム
+Healthmate-CoachAI デプロイ済みエージェント手動テストプログラム
 
-AWSにデプロイされたHealthCoachAIエージェントを
+AWSにデプロイされたHealthmate-CoachAIエージェントを
 ターミナル上でプロンプト入力による手動テストを行います。
 JWTアクセストークンを使用してboto3 bedrock-agentcoreクライアントで直接呼び出します。
 """
@@ -318,7 +318,7 @@ class DeployedAgentTestSession:
             }
             
 
-            print("\n💬 HealthCoachAI (Deployed) の回答:")
+            print("\n💬 Healthmate-CoachAI (Deployed) の回答:")
             print("-" * 60)
             
             # boto3 bedrock-agentcore クライアントを使用してエージェントを呼び出し
