@@ -1,5 +1,5 @@
 """
-HealthCoachAI エージェント
+Healthmate-CoachAI エージェント
 
 Amazon Bedrock AgentCore Runtime上で動作する
 健康支援AIエージェントです。
@@ -332,7 +332,7 @@ async def health_manager_mcp(tool_name: str, arguments: dict) -> str:
 
 
 async def _create_health_coach_agent_with_memory(session_id: str, actor_id: str):
-    """AgentCoreMemorySessionManagerを使用してHealthCoachAIエージェントを作成（エラーハンドリング付き）"""
+    """AgentCoreMemorySessionManagerを使用してHealthmate-CoachAIエージェントを作成（エラーハンドリング付き）"""
     
     try:
         # ペイロードからタイムゾーンと言語を取得
@@ -370,7 +370,7 @@ async def _create_health_coach_agent_with_memory(session_id: str, actor_id: str)
         
         # AgentCore Memory設定を作成
         memory_config = AgentCoreMemoryConfig(
-            memory_id="health_coach_ai_mem-yxqD6w75pO",  # .bedrock_agentcore.yamlから
+            memory_id="healthmate_coach_ai_mem-yxqD6w75pO",  # .bedrock_agentcore.yamlから
             session_id=session_id,  # UI側で生成されるセッションID（会話セッション区切り）
             actor_id=actor_id       # JWT token の sub（ユーザーごとの長期記憶）
         )
@@ -591,11 +591,11 @@ async def _extract_health_coach_events(queue, event, state):
 
 
 async def invoke_health_coach(query, session_id, actor_id, queue=None):
-    """HealthCoachAIを呼び出し（AgentCore Memory統合、フォールバック機能付き）"""
+    """Healthmate-CoachAIを呼び出し（AgentCore Memory統合、フォールバック機能付き）"""
     state = {"text": ""}
     
     if queue:
-        await send_event(queue, "HealthCoachAIが起動中", "start")
+        await send_event(queue, "Healthmate-CoachAIが起動中", "start")
     
     try:
         # AgentCore Memoryを使用してエージェントを作成
@@ -612,13 +612,13 @@ async def invoke_health_coach(query, session_id, actor_id, queue=None):
             await _extract_health_coach_events(queue, event, state)
         
         if queue:
-            await send_event(queue, "HealthCoachAIが応答を完了", "complete")
+            await send_event(queue, "Healthmate-CoachAIが応答を完了", "complete")
         
         print(f"DEBUG: Agent response completed with text length: {len(state['text'])}")
         return state["text"]
         
     except Exception as e:
-        error_msg = f"HealthCoachAIの処理中にエラーが発生しました: {e}"
+        error_msg = f"Healthmate-CoachAIの処理中にエラーが発生しました: {e}"
         print(f"ERROR: Agent error: {e}")
         
         # フォールバック: メモリなしでエージェントを作成して再試行
@@ -631,13 +631,13 @@ async def invoke_health_coach(query, session_id, actor_id, queue=None):
                 await _extract_health_coach_events(queue, event, state)
             
             if queue:
-                await send_event(queue, "HealthCoachAIが応答を完了（フォールバック）", "complete")
+                await send_event(queue, "Healthmate-CoachAIが応答を完了（フォールバック）", "complete")
             
             print(f"DEBUG: Fallback agent response completed")
             return state["text"]
             
         except Exception as fallback_error:
-            final_error_msg = f"HealthCoachAIのフォールバック処理も失敗しました: {fallback_error}"
+            final_error_msg = f"Healthmate-CoachAIのフォールバック処理も失敗しました: {fallback_error}"
             print(f"ERROR: Fallback error: {fallback_error}")
             if queue:
                 await send_event(queue, final_error_msg, "error")
@@ -650,7 +650,7 @@ app = BedrockAgentCoreApp()
 
 @app.entrypoint
 async def invoke(payload):
-    """HealthCoachAI のエントリーポイント"""
+    """Healthmate-CoachAI のエントリーポイント"""
     # デバッグ: ペイロード全体を確認
     print(f"DEBUG: Full payload: {payload}")
     

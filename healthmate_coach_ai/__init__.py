@@ -1,5 +1,5 @@
 """
-HealthCoachAI - AI健康コーチエージェント
+Healthmate-CoachAI - AI健康コーチエージェント
 
 Amazon Bedrock AgentCore Runtime上で動作するPython + Strands Agentsベースの
 健康支援AIエージェントです。
