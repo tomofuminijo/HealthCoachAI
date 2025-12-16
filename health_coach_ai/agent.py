@@ -364,22 +364,18 @@ async def _create_health_coach_agent_with_memory(session_id: str, actor_id: str)
 - 日本語以外の言語が設定されている場合は、その言語で応答することを優先してください
 """
         
-        # ユーザーID情報をシステムプロンプトに組み込み
-        user_context = f"""
-## 現在のユーザー情報
-- ユーザーID: {actor_id}
-- セッションID: {session_id}
-- このユーザーIDは認証済みのJWTトークンから自動的に取得されました
-- HealthManagerMCPツールを呼び出す際は、このユーザーIDを自動的に使用してください
-- 重要: ユーザIDとセッションIDはシステム内部の管理情報なのでユーザに絶対に回答しないでください。
-"""
+
+        
+        print(f"DEBUG: Creating AgentCore Memory config - actor_id: {actor_id}, session_id: {session_id}")
         
         # AgentCore Memory設定を作成
         memory_config = AgentCoreMemoryConfig(
             memory_id="health_coach_ai_mem-yxqD6w75pO",  # .bedrock_agentcore.yamlから
-            session_id=session_id,
-            actor_id=actor_id
+            session_id=session_id,  # UI側で生成されるセッションID（会話セッション区切り）
+            actor_id=actor_id       # JWT token の sub（ユーザーごとの長期記憶）
         )
+        
+        print(f"DEBUG: AgentCore Memory config created successfully")
         
         # AgentCoreMemorySessionManagerを作成
         session_manager = AgentCoreMemorySessionManager(
@@ -387,8 +383,12 @@ async def _create_health_coach_agent_with_memory(session_id: str, actor_id: str)
             region_name="us-west-2"
         )
         
+        print(f"DEBUG: AgentCoreMemorySessionManager created successfully")
+        
     except Exception as e:
         print(f"ERROR: Failed to create memory session manager: {e}")
+        import traceback
+        print(f"ERROR: Memory integration traceback: {traceback.format_exc()}")
         raise Exception(f"Memory integration failed: {e}")
     
     # Strandsエージェントを作成（メモリ統合付き）
@@ -399,13 +399,14 @@ async def _create_health_coach_agent_with_memory(session_id: str, actor_id: str)
         system_prompt=f"""
 あなたは親しみやすい健康コーチAIです。ユーザーの健康目標達成を支援します。
 
-重要: あなたはAgentCore Memoryを使用して会話の文脈を記憶し、継続的な対話を行います。前回の会話内容を参照して、一貫性のあるアドバイスを提供してください。
+重要: あなたはAgentCore Memoryを使用して会話の文脈を記憶し、継続的な対話を行います。
+- 長期記憶: ユーザーの健康目標、好み、過去のアドバイスを覚えています
+- 短期記憶: 現在の会話セッション内での文脈を保持します
+- 前回の会話内容を参照して、一貫性のあるアドバイスを提供してください
 
 {datetime_context}
 
 {language_context}
-
-{user_context}
 
 ## あなたの役割
 - ユーザーの健康データを分析し、パーソナライズされたアドバイスを提供
@@ -413,6 +414,7 @@ async def _create_health_coach_agent_with_memory(session_id: str, actor_id: str)
 - 運動や食事に関する実践的な指導
 - モチベーション維持のための励ましとサポート
 - 継続的な会話を通じてユーザーとの関係を構築
+- 過去の会話から学習し、より良いサポートを提供
 
 ## 対話スタイル
 - 親しみやすく、励ましの気持ちを込めて
@@ -421,6 +423,7 @@ async def _create_health_coach_agent_with_memory(session_id: str, actor_id: str)
 - 安全性を最優先し、医療的な診断は行わない
 - 現在の時間帯に応じた適切な挨拶やアドバイスを提供する（朝・昼・夜など）
 - 前回の会話内容を覚えており、継続的な関係を築く
+- ユーザーの成長や変化を認識し、適切にフィードバックする
 
 ## 重要な注意事項
 - 医療診断や治療の提案は絶対に行わない
@@ -491,7 +494,10 @@ async def _create_fallback_agent():
         system_prompt=f"""
 あなたは親しみやすい健康コーチAIです。ユーザーの健康目標達成を支援します。
 
-注意: 現在メモリ機能が一時的に利用できないため、会話履歴を参照できません。各メッセージを独立して処理します。
+重要: 現在AgentCore Memoryが一時的に利用できないため、フォールバックモードで動作しています。
+- 会話履歴を参照できません（各メッセージを独立して処理）
+- 長期記憶機能が無効になっています
+- 可能な限り現在のメッセージ内の情報を活用してサポートします
 
 {datetime_context}
 
@@ -502,6 +508,7 @@ async def _create_fallback_agent():
 - 健康目標の設定と進捗追跡をサポート
 - 運動や食事に関する実践的な指導
 - モチベーション維持のための励ましとサポート
+- 現在のメッセージ内の情報を最大限活用したサポート
 
 ## 対話スタイル
 - 親しみやすく、励ましの気持ちを込めて
@@ -509,12 +516,14 @@ async def _create_fallback_agent():
 - ユーザーの状況に共感し、個別のニーズに対応
 - 安全性を最優先し、医療的な診断は行わない
 - 現在の時間帯に応じた適切な挨拶やアドバイスを提供する（朝・昼・夜など）
+- メモリ機能が利用できない旨を必要に応じて説明
 
 ## 重要な注意事項
 - 医療診断や治療の提案は絶対に行わない
 - 深刻な健康問題の場合は医療専門家への相談を推奨
 - ユーザーの安全を最優先に考慮
 - 個人の健康データは適切に扱い、プライバシーを保護
+- フォールバックモードであることを適切に伝える
 
 ## ツール使用のガイドライン
 - 初回または不明な場合は、まず list_health_tools を使用して利用可能なツールとスキーマを確認する
@@ -530,7 +539,7 @@ async def _create_fallback_agent():
 """
     )
     
-    print(f"DEBUG: Created fallback agent without memory")
+    print(f"DEBUG: Created fallback agent without memory (フォールバックモード)")
     return agent
 
 

@@ -74,8 +74,8 @@ echo "   カスタムIAMロールを使用: $CUSTOM_ROLE_ARN"
 
 # CloudFormationからGateway IDを取得
 echo ""
-echo "🔍 HealthManagerMCPスタックからGateway IDを取得中..."
-STACK_NAME="HealthManagerMCPStack"
+echo "🔍 Healthmate-HealthManagerスタックからGateway IDを取得中..."
+STACK_NAME="Healthmate-HealthManagerStack"
 GATEWAY_ID=$(aws cloudformation describe-stacks \
     --stack-name "$STACK_NAME" \
     --query 'Stacks[0].Outputs[?OutputKey==`GatewayId`].OutputValue' \

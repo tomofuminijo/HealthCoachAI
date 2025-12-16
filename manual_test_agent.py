@@ -50,7 +50,7 @@ class LocalTestSession:
     def _get_config_from_cloudformation(self) -> dict:
         """CloudFormationスタックから設定を取得"""
         try:
-            stack_name = 'HealthManagerMCPStack'  # デフォルトスタック名
+            stack_name = 'Healthmate-HealthManagerStack'  # デフォルトスタック名
             region = 'us-west-2'
             
             cfn = boto3.client('cloudformation', region_name=region)

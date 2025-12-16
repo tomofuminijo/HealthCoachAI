@@ -63,7 +63,7 @@ python3 create_custom_iam_role.py
 ### 環境変数設定（オプション）
 
 ```bash
-# CloudFormationスタック名（デフォルト: HealthManagerMCPStack）
+# CloudFormationスタック名（デフォルト: Healthmate-HealthManagerStack）
 export HEALTH_STACK_NAME="YOUR_STACK_NAME"
 
 # AWSリージョン（デフォルト: us-west-2）

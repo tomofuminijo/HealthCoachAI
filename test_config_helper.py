@@ -20,7 +20,7 @@ class TestConfig:
     def _get_stack_name(self) -> str:
         """CloudFormationスタック名を取得"""
         import os
-        return os.environ.get('HEALTH_STACK_NAME', 'HealthManagerMCPStack')
+        return os.environ.get('HEALTH_STACK_NAME', 'Healthmate-HealthManagerStack')
     
     def _get_region(self) -> str:
         """AWSリージョンを取得"""
