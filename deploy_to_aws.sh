@@ -1,17 +1,17 @@
 #!/bin/bash
 
-# HealthCoachAI エージェントをAWSにデプロイするスクリプト
+# Healthmate-CoachAI エージェントをAWSにデプロイするスクリプト
 # カスタムIAMロールを使用したベストプラクティス版
 
 set -e  # エラー時に停止
 
-echo "🚀 HealthCoachAI エージェントをAWSにデプロイします"
+echo "🚀 Healthmate-CoachAI エージェントをAWSにデプロイします"
 echo "=" * 80
 
 # AWS設定
 export AWS_DEFAULT_REGION=${AWS_REGION:-us-west-2}
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo "")
-ROLE_NAME="HealthCoachAI-AgentCore-Runtime-Role"
+ROLE_NAME="Healthmate-CoachAI-AgentCore-Runtime-Role"
 CUSTOM_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${ROLE_NAME}"
 
 echo "🔐 AWS設定を確認中..."
@@ -91,8 +91,8 @@ echo "✅ Gateway ID取得成功: $GATEWAY_ID"
 
 # AgentCore設定でカスタムロールを指定
 agentcore configure \
-    --entrypoint health_coach_ai/agent.py \
-    --name health_coach_ai \
+    --entrypoint healthmate_coach_ai/agent.py \
+    --name healthmate_coach_ai \
     --execution-role "$CUSTOM_ROLE_ARN" \
     --deployment-type container \
     --ecr auto \
@@ -104,8 +104,8 @@ cat .bedrock_agentcore.yaml
 
 echo ""
 echo "🚀 AgentCore デプロイを開始します..."
-echo "   エージェント名: health_coach_ai"
-echo "   エントリーポイント: health_coach_ai/agent.py"
+echo "   エージェント名: healthmate_coach_ai"
+echo "   エントリーポイント: healthmate_coach_ai/agent.py"
 echo "   カスタムIAMロール: $CUSTOM_ROLE_ARN"
 echo ""
 

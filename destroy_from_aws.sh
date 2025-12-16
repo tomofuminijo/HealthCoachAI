@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# HealthCoachAI エージェントをAWSからアンデプロイするスクリプト
+# Healthmate-CoachAI エージェントをAWSからアンデプロイするスクリプト
 # 全てのAWSリソースとローカル設定を削除
 
 set -e  # エラー時に停止
 
-echo "🗑️  HealthCoachAI エージェントをAWSからアンデプロイします"
+echo "🗑️  Healthmate-CoachAI エージェントをAWSからアンデプロイします"
 echo "=" * 80
 
 # AWS設定
@@ -97,11 +97,11 @@ echo "🧠 メモリリソースを確認中..."
 # メモリリソースの確認と削除
 MEMORY_LIST=$(AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION agentcore memory list --format json 2>/dev/null || echo "[]")
 
-if echo "$MEMORY_LIST" | grep -q "health_coach_ai_mem"; then
-    echo "🔍 HealthCoachAI関連のメモリリソースが見つかりました。削除中..."
+if echo "$MEMORY_LIST" | grep -q "healthmate_coach_ai_mem"; then
+    echo "🔍 Healthmate-CoachAI関連のメモリリソースが見つかりました。削除中..."
     
-    # health_coach_ai_mem で始まるメモリIDを抽出して削除
-    MEMORY_IDS=$(echo "$MEMORY_LIST" | grep -o 'health_coach_ai_mem-[A-Za-z0-9]*' || true)
+    # healthmate_coach_ai_mem で始まるメモリIDを抽出して削除
+    MEMORY_IDS=$(echo "$MEMORY_LIST" | grep -o 'healthmate_coach_ai_mem-[A-Za-z0-9]*' || true)
     
     if [ -n "$MEMORY_IDS" ]; then
         for MEMORY_ID in $MEMORY_IDS; do
@@ -113,7 +113,7 @@ if echo "$MEMORY_LIST" | grep -q "health_coach_ai_mem"; then
         echo "ℹ️  削除対象のメモリリソースが見つかりませんでした。"
     fi
 else
-    echo "ℹ️  HealthCoachAI関連のメモリリソースは見つかりませんでした。"
+    echo "ℹ️  Healthmate-CoachAI関連のメモリリソースは見つかりませんでした。"
 fi
 
 echo ""
