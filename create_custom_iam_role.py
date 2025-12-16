@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-HealthCoachAI用カスタムIAMロール作成スクリプト
+Healthmate-CoachAI用カスタムIAMロール作成スクリプト
 
 AgentCore Runtime用の適切な権限を持つカスタムIAMロールを作成します。
 """
@@ -28,10 +28,10 @@ def create_iam_role_and_policies():
     # AWS設定
     region = 'us-west-2'
     account_id = boto3.client('sts').get_caller_identity()['Account']
-    role_name = 'HealthCoachAI-AgentCore-Runtime-Role'
+    role_name = 'Healthmate-CoachAI-AgentCore-Runtime-Role'
     
     print("=" * 80)
-    print("🔐 HealthCoachAI用カスタムIAMロール作成")
+    print("🔐 Healthmate-CoachAI用カスタムIAMロール作成")
     print("=" * 80)
     print(f"📍 リージョン: {region}")
     print(f"🏢 アカウントID: {account_id}")
@@ -52,7 +52,7 @@ def create_iam_role_and_policies():
             iam.create_role(
                 RoleName=role_name,
                 AssumeRolePolicyDocument=json.dumps(trust_policy),
-                Description='HealthCoachAI AgentCore Runtime Custom Role',
+                Description='Healthmate-CoachAI AgentCore Runtime Custom Role',
                 MaxSessionDuration=3600
             )
             print(f"   ✅ IAMロール作成完了")
@@ -65,7 +65,7 @@ def create_iam_role_and_policies():
         # 3. ポリシーを作成・アタッチ
         policies = [
             {
-                'name': 'HealthCoachAI-AgentCore-Runtime-Policy',
+                'name': 'Healthmate-CoachAI-AgentCore-Runtime-Policy',
                 'file': 'bedrock-agentcore-runtime-policy.json',
                 'description': 'AgentCore Runtime Basic Permissions'
             }
