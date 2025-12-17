@@ -1,0 +1,21 @@
+{
+  "version": "48.0.0",
+  "files": {
+    "4e432e74c525f228571a61e446dcd9e9295fb32ba21c88d5ec42acc9909de74e": {
+      "displayName": "Healthmate-CoachAI-Stack Template",
+      "source": {
+        "path": "Healthmate-CoachAI-Stack.template.json",
+        "packaging": "file"
+      },
+      "destinations": {
+        "current_account-us-west-2-61fb7959": {
+          "bucketName": "cdk-hnb659fds-assets-${AWS::AccountId}-us-west-2",
+          "objectKey": "4e432e74c525f228571a61e446dcd9e9295fb32ba21c88d5ec42acc9909de74e.json",
+          "region": "us-west-2",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/cdk-hnb659fds-file-publishing-role-${AWS::AccountId}-us-west-2"
+        }
+      }
+    }
+  },
+  "dockerImages": {}
+}

@@ -1,0 +1,528 @@
+{
+ "Description": "Healthmate-CoachAI Service CDK Stack - AgentCore Runtime Deployment",
+ "Resources": {
+  "HealthmateCoachAIExecutionRole83206A41": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "bedrock-agentcore.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Description": "Healthmate-CoachAI AgentCore Runtime Role (CDK Managed)",
+    "MaxSessionDuration": 3600,
+    "RoleName": "Healthmate-CoachAI-AgentCore-Runtime-Role-CDK"
+   },
+   "Metadata": {
+    "aws:cdk:path": "Healthmate-CoachAI-Stack/HealthmateCoachAIExecutionRole/Resource"
+   }
+  },
+  "HealthmateCoachAIExecutionRoleDefaultPolicy0570A5D4": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "bedrock-agentcore:*",
+        "bedrock:GetFoundationModel",
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream",
+        "bedrock:ListFoundationModels",
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetAuthorizationToken",
+        "ecr:GetDownloadUrlForLayer"
+       ],
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams",
+        "logs:PutLogEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:aws:logs:us-west-2:",
+          {
+           "Ref": "AWS::AccountId"
+          },
+          ":log-group:/aws/bedrock/agentcore/healthmate-coach-ai*"
+         ]
+        ]
+       }
+      },
+      {
+       "Action": [
+        "cloudformation:DescribeStackResources",
+        "cloudformation:DescribeStacks"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:aws:cloudformation:us-west-2:",
+          {
+           "Ref": "AWS::AccountId"
+          },
+          ":stack/Healthmate-HealthManagerStack/*"
+         ]
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "HealthmateCoachAIExecutionRoleDefaultPolicy0570A5D4",
+    "Roles": [
+     {
+      "Ref": "HealthmateCoachAIExecutionRole83206A41"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "Healthmate-CoachAI-Stack/HealthmateCoachAIExecutionRole/DefaultPolicy/Resource"
+   }
+  },
+  "HealthmateCoachAIRepository93344280": {
+   "Type": "AWS::ECR::Repository",
+   "Properties": {
+    "ImageScanningConfiguration": {
+     "ScanOnPush": true
+    },
+    "LifecyclePolicy": {
+     "LifecyclePolicyText": "{\"rules\":[{\"rulePriority\":1,\"description\":\"Keep only the latest 10 images\",\"selection\":{\"tagStatus\":\"any\",\"countType\":\"imageCountMoreThan\",\"countNumber\":10},\"action\":{\"type\":\"expire\"}}]}"
+    },
+    "RepositoryName": "healthmate-coach-ai"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "Healthmate-CoachAI-Stack/HealthmateCoachAIRepository/Resource"
+   }
+  },
+  "HealthmateCoachAICodeBuildRoleA081BF26": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "codebuild.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Description": "Healthmate-CoachAI CodeBuild Role (CDK Managed)",
+    "RoleName": "Healthmate-CoachAI-CodeBuild-Role-CDK"
+   },
+   "Metadata": {
+    "aws:cdk:path": "Healthmate-CoachAI-Stack/HealthmateCoachAICodeBuildRole/Resource"
+   }
+  },
+  "HealthmateCoachAICodeBuildRoleDefaultPolicyCB7F03B4": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:logs:us-west-2:",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":log-group:/aws/codebuild/",
+           {
+            "Ref": "HealthmateCoachAIBuildProjectA908018B"
+           },
+           ":*"
+          ]
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:logs:us-west-2:",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":log-group:/aws/codebuild/",
+           {
+            "Ref": "HealthmateCoachAIBuildProjectA908018B"
+           }
+          ]
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:logs:us-west-2:",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":log-group:/aws/codebuild/healthmate-coach-ai-build*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:CompleteLayerUpload",
+        "ecr:GetAuthorizationToken",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:InitiateLayerUpload",
+        "ecr:PutImage",
+        "ecr:UploadLayerPart"
+       ],
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": [
+        "s3:GetObject",
+        "s3:GetObjectVersion",
+        "s3:PutObject"
+       ],
+       "Effect": "Allow",
+       "Resource": "arn:aws:s3:::codepipeline-*"
+      },
+      {
+       "Action": [
+        "codebuild:BatchPutCodeCoverages",
+        "codebuild:BatchPutTestCases",
+        "codebuild:CreateReport",
+        "codebuild:CreateReportGroup",
+        "codebuild:UpdateReport"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:aws:codebuild:us-west-2:",
+          {
+           "Ref": "AWS::AccountId"
+          },
+          ":report-group/",
+          {
+           "Ref": "HealthmateCoachAIBuildProjectA908018B"
+          },
+          "-*"
+         ]
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "HealthmateCoachAICodeBuildRoleDefaultPolicyCB7F03B4",
+    "Roles": [
+     {
+      "Ref": "HealthmateCoachAICodeBuildRoleA081BF26"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "Healthmate-CoachAI-Stack/HealthmateCoachAICodeBuildRole/DefaultPolicy/Resource"
+   }
+  },
+  "HealthmateCoachAIBuildProjectA908018B": {
+   "Type": "AWS::CodeBuild::Project",
+   "Properties": {
+    "Artifacts": {
+     "Type": "NO_ARTIFACTS"
+    },
+    "Cache": {
+     "Type": "NO_CACHE"
+    },
+    "Description": "Healthmate-CoachAI Container Build Project",
+    "EncryptionKey": "alias/aws/s3",
+    "Environment": {
+     "ComputeType": "BUILD_GENERAL1_SMALL",
+     "Image": "aws/codebuild/standard:7.0",
+     "ImagePullCredentialsType": "CODEBUILD",
+     "PrivilegedMode": true,
+     "Type": "LINUX_CONTAINER"
+    },
+    "Name": "healthmate-coach-ai-build",
+    "ServiceRole": {
+     "Fn::GetAtt": [
+      "HealthmateCoachAICodeBuildRoleA081BF26",
+      "Arn"
+     ]
+    },
+    "Source": {
+     "BuildSpec": {
+      "Fn::Join": [
+       "",
+       [
+        "{\n  \"version\": \"0.2\",\n  \"phases\": {\n    \"pre_build\": {\n      \"commands\": [\n        \"echo Logging in to Amazon ECR...\",\n        \"aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com\"\n      ]\n    },\n    \"build\": {\n      \"commands\": [\n        \"echo Build started on `date`\",\n        \"echo Building the Docker image...\",\n        \"docker build -t healthmate-coach-ai .\",\n        \"docker tag healthmate-coach-ai:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/healthmate-coach-ai:latest\"\n      ]\n    },\n    \"post_build\": {\n      \"commands\": [\n        \"echo Build completed on `date`\",\n        \"echo Pushing the Docker image...\",\n        \"docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/healthmate-coach-ai:latest\"\n      ]\n    }\n  },\n  \"env\": {\n    \"variables\": {\n      \"AWS_DEFAULT_REGION\": \"us-west-2\",\n      \"AWS_ACCOUNT_ID\": \"",
+        {
+         "Ref": "AWS::AccountId"
+        },
+        "\",\n      \"IMAGE_REPO_NAME\": \"healthmate-coach-ai\",\n      \"IMAGE_TAG\": \"latest\"\n    }\n  }\n}"
+       ]
+      ]
+     },
+     "Location": "https://github.com/your-github-username/healthmate-coach-ai.git",
+     "ReportBuildStatus": true,
+     "Type": "GITHUB"
+    },
+    "TimeoutInMinutes": 30,
+    "Triggers": {
+     "Webhook": false
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "Healthmate-CoachAI-Stack/HealthmateCoachAIBuildProject/Resource"
+   }
+  },
+  "HealthmateCoachAILogGroup957145AF": {
+   "Type": "AWS::Logs::LogGroup",
+   "Properties": {
+    "LogGroupName": "/aws/bedrock/agentcore/healthmate-coach-ai",
+    "RetentionInDays": 30
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "Healthmate-CoachAI-Stack/HealthmateCoachAILogGroup/Resource"
+   }
+  },
+  "HealthmateCoachAIMemory": {
+   "Type": "AWS::BedrockAgentCore::Memory",
+   "Properties": {
+    "Description": "Healthmate-CoachAI AgentCore Memory for conversation history (STM_ONLY mode)",
+    "EventExpiryDuration": 30,
+    "Name": "healthmatecoachaimemory"
+   },
+   "Metadata": {
+    "aws:cdk:path": "Healthmate-CoachAI-Stack/HealthmateCoachAIMemory"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/0WOTQ6CQAyFz8J+qHFIvIALNxoJHsBAqTgwTMn8xJAJdxeGGFfvvX7tSyXIQoLM6o/LsR1yrRqID1/jINbRM6p6hFixJnF+maQla4XzFne3CEK77tDETnm2Cf3TIpBbaoLSLcTSck/o0/FuF6G5cxCv3F0sh2lDP7+IhlrLONQdGY9sCVZ6ozHVVuQ4WEyP3YOfwtpVzv7N5lDAUcIp651SuQ3Gq5Gg2vULfXOOuvAAAAA="
+   },
+   "Metadata": {
+    "aws:cdk:path": "Healthmate-CoachAI-Stack/CDKMetadata/Default"
+   }
+  }
+ },
+ "Outputs": {
+  "StackName": {
+   "Description": "CDK Stack Name",
+   "Value": "Healthmate-CoachAI-Stack"
+  },
+  "Region": {
+   "Description": "AWS Region",
+   "Value": "us-west-2"
+  },
+  "Account": {
+   "Description": "AWS Account ID",
+   "Value": {
+    "Ref": "AWS::AccountId"
+   }
+  },
+  "AgentName": {
+   "Description": "Agent Name",
+   "Value": "healthmate-coach-ai"
+  },
+  "Environment": {
+   "Description": "Environment (development/staging/production)",
+   "Value": "development"
+  },
+  "ExecutionRoleArn": {
+   "Description": "AgentCore Execution Role ARN",
+   "Value": {
+    "Fn::GetAtt": [
+     "HealthmateCoachAIExecutionRole83206A41",
+     "Arn"
+    ]
+   }
+  },
+  "ExecutionRoleName": {
+   "Description": "AgentCore Execution Role Name",
+   "Value": {
+    "Ref": "HealthmateCoachAIExecutionRole83206A41"
+   }
+  },
+  "MemoryArn": {
+   "Description": "AgentCore Memory ARN",
+   "Value": {
+    "Fn::GetAtt": [
+     "HealthmateCoachAIMemory",
+     "MemoryArn"
+    ]
+   }
+  },
+  "MemoryId": {
+   "Description": "AgentCore Memory ID",
+   "Value": {
+    "Fn::GetAtt": [
+     "HealthmateCoachAIMemory",
+     "MemoryId"
+    ]
+   }
+  },
+  "MemoryName": {
+   "Description": "AgentCore Memory Name",
+   "Value": "healthmatecoachaimemory"
+  },
+  "ECRRepositoryUri": {
+   "Description": "ECR Repository URI",
+   "Value": {
+    "Fn::Join": [
+     "",
+     [
+      {
+       "Fn::Select": [
+        4,
+        {
+         "Fn::Split": [
+          ":",
+          {
+           "Fn::GetAtt": [
+            "HealthmateCoachAIRepository93344280",
+            "Arn"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      ".dkr.ecr.",
+      {
+       "Fn::Select": [
+        3,
+        {
+         "Fn::Split": [
+          ":",
+          {
+           "Fn::GetAtt": [
+            "HealthmateCoachAIRepository93344280",
+            "Arn"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      ".",
+      {
+       "Ref": "AWS::URLSuffix"
+      },
+      "/",
+      {
+       "Ref": "HealthmateCoachAIRepository93344280"
+      }
+     ]
+    ]
+   }
+  },
+  "ECRRepositoryName": {
+   "Description": "ECR Repository Name",
+   "Value": {
+    "Ref": "HealthmateCoachAIRepository93344280"
+   }
+  },
+  "CodeBuildProjectName": {
+   "Description": "CodeBuild Project Name",
+   "Value": {
+    "Ref": "HealthmateCoachAIBuildProjectA908018B"
+   }
+  },
+  "CodeBuildProjectArn": {
+   "Description": "CodeBuild Project ARN",
+   "Value": {
+    "Fn::GetAtt": [
+     "HealthmateCoachAIBuildProjectA908018B",
+     "Arn"
+    ]
+   }
+  },
+  "LogGroupName": {
+   "Description": "CloudWatch Log Group Name",
+   "Value": {
+    "Ref": "HealthmateCoachAILogGroup957145AF"
+   }
+  },
+  "LogGroupArn": {
+   "Description": "CloudWatch Log Group ARN",
+   "Value": {
+    "Fn::GetAtt": [
+     "HealthmateCoachAILogGroup957145AF",
+     "Arn"
+    ]
+   }
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}
