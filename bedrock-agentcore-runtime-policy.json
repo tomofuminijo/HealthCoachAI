@@ -21,6 +21,43 @@
         {
             "Effect": "Allow",
             "Action": [
+                "bedrock-agentcore:GetWorkloadAccessToken",
+                "bedrock-agentcore:GetWorkloadAccessTokenForJWT",
+                "bedrock-agentcore:GetWorkloadAccessTokenForUserId"
+            ],
+            "Resource": "*",
+            "Condition": {
+                "StringEquals": {
+                    "bedrock-agentcore:workload-identity-name": "healthmate-coach-ai-workload"
+                }
+            }
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "secretsmanager:GetSecretValue"
+            ],
+            "Resource": "arn:aws:secretsmanager:us-west-2:718691933423:secret:bedrock-agentcore-identity!default/oauth2/healthmanager-oauth2-provider-*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "cloudformation:DescribeStacks",
+                "cloudformation:ListExports"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "cognito-idp:DescribeUserPool",
+                "cognito-idp:DescribeUserPoolClient"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
                 "logs:CreateLogGroup",
                 "logs:CreateLogStream",
                 "logs:PutLogEvents",

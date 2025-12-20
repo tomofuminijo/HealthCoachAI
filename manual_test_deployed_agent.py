@@ -53,7 +53,11 @@ class DeployedAgentTestSession:
         self.agent_runtime_arn = None
     
     def calculate_secret_hash(self, username: str) -> str:
-        """Cognito Client Secret Hash を計算"""
+        """Cognito Client Secret Hash を計算（Client Secret不要の場合はNoneを返す）"""
+        # Client Secretが設定されていない場合はNoneを返す
+        if not hasattr(self.config, 'client_secret') or not self.config.get('client_secret'):
+            return None
+        
         message = username + self.config['client_id']
         dig = hmac.new(
             self.config['client_secret'].encode('utf-8'),
@@ -158,18 +162,38 @@ class DeployedAgentTestSession:
                 Permanent=True
             )
             
-            # 認証実行
+            # 認証実行（ALLOW_USER_PASSWORD_AUTHフローを使用）
             secret_hash = self.calculate_secret_hash(self.test_username)
-            response = self.cognito_client.admin_initiate_auth(
-                UserPoolId=self.config['user_pool_id'],
-                ClientId=self.config['client_id'],
-                AuthFlow='ADMIN_NO_SRP_AUTH',
-                AuthParameters={
-                    'USERNAME': self.test_username,
-                    'PASSWORD': test_password,
-                    'SECRET_HASH': secret_hash
-                }
-            )
+            
+            # AuthParametersを構築（Secret Hashが不要な場合は含めない）
+            auth_parameters = {
+                'USERNAME': self.test_username,
+                'PASSWORD': test_password
+            }
+            
+            # Secret Hashが利用可能な場合のみ追加
+            if secret_hash:
+                auth_parameters['SECRET_HASH'] = secret_hash
+            
+            # まずADMIN_NO_SRP_AUTHを試行
+            try:
+                response = self.cognito_client.admin_initiate_auth(
+                    UserPoolId=self.config['user_pool_id'],
+                    ClientId=self.config['client_id'],
+                    AuthFlow='ADMIN_NO_SRP_AUTH',
+                    AuthParameters=auth_parameters
+                )
+            except ClientError as e:
+                if 'Auth flow not enabled' in str(e):
+                    print("   ⚠️  ADMIN_NO_SRP_AUTH フローが無効です。ALLOW_USER_PASSWORD_AUTH を試行します...")
+                    # ALLOW_USER_PASSWORD_AUTHフローを試行
+                    response = self.cognito_client.initiate_auth(
+                        ClientId=self.config['client_id'],
+                        AuthFlow='USER_PASSWORD_AUTH',
+                        AuthParameters=auth_parameters
+                    )
+                else:
+                    raise
             
             self.jwt_token = response['AuthenticationResult']['AccessToken']
             self.session_active = True
@@ -322,9 +346,14 @@ class DeployedAgentTestSession:
             print("-" * 60)
             
             # boto3 bedrock-agentcore クライアントを使用してエージェントを呼び出し
+            # JWTトークンからユーザーIDを取得してruntimeUserIdとして使用
+            payload_data = self._decode_jwt_payload(self.jwt_token)
+            runtime_user_id = payload_data.get('sub', 'test-user-123')  # フォールバック値
+            
             response = self.agentcore_client.invoke_agent_runtime(
                 agentRuntimeArn=self.agent_runtime_arn,
                 runtimeSessionId=session_id,
+                runtimeUserId=runtime_user_id,
                 payload=json.dumps(payload)
             )
             
@@ -410,8 +439,13 @@ class DeployedAgentTestSession:
             }
             
             # boto3 bedrock-agentcore クライアントを使用してエージェントを呼び出し
+            # JWTトークンからユーザーIDを取得してruntimeUserIdとして使用
+            payload_data = self._decode_jwt_payload(self.jwt_token)
+            runtime_user_id = payload_data.get('sub', 'test-user-123')  # フォールバック値
+            
             response = self.agentcore_client.invoke_agent_runtime(
                 agentRuntimeArn=self.agent_runtime_arn,
+                runtimeUserId=runtime_user_id,
                 payload=json.dumps(payload)
             )
             

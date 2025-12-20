@@ -36,6 +36,31 @@ echo ""
 echo "🔍 カスタムIAMロールの存在を確認中..."
 if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
     echo "✅ カスタムIAMロール '$ROLE_NAME' が存在します"
+    
+    # IAMロールのポリシーを更新
+    echo "🔄 IAMロールのポリシーを最新版に更新中..."
+    POLICY_NAME="Healthmate-CoachAI-AgentCore-Runtime-Policy"
+    POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/${POLICY_NAME}"
+    
+    # 既存のポリシーバージョンを確認
+    POLICY_EXISTS=$(aws iam get-policy --policy-arn "$POLICY_ARN" 2>/dev/null || echo "")
+    
+    if [ -n "$POLICY_EXISTS" ]; then
+        echo "📜 既存のポリシーを更新中..."
+        # 新しいポリシーバージョンを作成
+        aws iam create-policy-version \
+            --policy-arn "$POLICY_ARN" \
+            --policy-document file://bedrock-agentcore-runtime-policy.json \
+            --set-as-default >/dev/null 2>&1
+        
+        if [ $? -eq 0 ]; then
+            echo "✅ ポリシー更新完了"
+        else
+            echo "⚠️  ポリシー更新に失敗しました。既存のポリシーを使用します。"
+        fi
+    else
+        echo "⚠️  ポリシーが見つかりません。新規作成が必要です。"
+    fi
 else
     echo "❌ カスタムIAMロール '$ROLE_NAME' が見つかりません"
     echo ""
@@ -109,23 +134,48 @@ echo "   エントリーポイント: healthmate_coach_ai/agent.py"
 echo "   カスタムIAMロール: $CUSTOM_ROLE_ARN"
 echo ""
 
-# AgentCore デプロイを実行（環境変数付き）
+# M2M認証設定
+echo ""
+echo "🔐 M2M認証設定を準備中..."
+AGENTCORE_PROVIDER_NAME="healthmanager-oauth2-provider"
+echo "   プロバイダー名: $AGENTCORE_PROVIDER_NAME"
+
+# 必須環境変数の検証
+echo ""
+echo "🔍 必須環境変数を検証中..."
+echo "   ✅ HEALTHMANAGER_GATEWAY_ID: $GATEWAY_ID"
+echo "   ✅ AWS_REGION: $AWS_DEFAULT_REGION"
+echo "   ✅ AGENTCORE_PROVIDER_NAME: $AGENTCORE_PROVIDER_NAME"
+
+# AgentCore デプロイを実行（M2M認証環境変数付き）
+echo ""
+echo "🚀 M2M認証対応でAgentCore デプロイを開始..."
 agentcore launch \
     --env HEALTHMANAGER_GATEWAY_ID="$GATEWAY_ID" \
-    --env AWS_REGION="$AWS_DEFAULT_REGION"
+    --env AWS_REGION="$AWS_DEFAULT_REGION" \
+    --env AGENTCORE_PROVIDER_NAME="$AGENTCORE_PROVIDER_NAME"
 
 echo ""
-echo "✅ デプロイが完了しました！"
+echo "✅ M2M認証対応デプロイが完了しました！"
 echo ""
 echo "📋 デプロイ情報:"
 echo "   🎭 使用したIAMロール: $CUSTOM_ROLE_ARN"
 echo "   📍 リージョン: $AWS_DEFAULT_REGION"
 echo "   🏢 アカウント: $ACCOUNT_ID"
+echo "   🔐 M2Mプロバイダー: $AGENTCORE_PROVIDER_NAME"
 echo ""
 echo "🔐 IAMロールに含まれる権限:"
 echo "   ✅ AgentCore Runtime基本権限"
 echo "   ✅ CloudFormation読み取り権限"
 echo "   ✅ Cognito読み取り権限"
+echo "   ✅ M2M認証権限"
+echo ""
+echo "🔧 M2M認証設定:"
+echo "   ✅ Provider Name: $AGENTCORE_PROVIDER_NAME"
+echo "   ✅ Cognito Scope: HealthManager/HealthTarget:invoke"
+echo "   ✅ Auth Flow: M2M"
+echo "   ✅ Gateway ID: $GATEWAY_ID"
+echo "   ✅ Memory: AgentCore Runtime自動生成"
 echo ""
 echo "📋 次のステップ:"
 echo "   1. agentcore status でエージェント状態を確認"

@@ -17,10 +17,12 @@ class TestConfig:
     def __init__(self):
         self._config = None
     
-    def _get_stack_name(self) -> str:
+    def _get_stack_names(self) -> tuple:
         """CloudFormationスタック名を取得"""
         import os
-        return os.environ.get('HEALTH_STACK_NAME', 'Healthmate-HealthManagerStack')
+        core_stack = os.environ.get('CORE_STACK_NAME', 'Healthmate-CoreStack')
+        healthmanager_stack = os.environ.get('HEALTH_STACK_NAME', 'Healthmate-HealthManagerStack')
+        return core_stack, healthmanager_stack
     
     def _get_region(self) -> str:
         """AWSリージョンを取得"""
@@ -35,43 +37,54 @@ class TestConfig:
     def _fetch_cloudformation_config(self) -> dict:
         """CloudFormationスタックから設定を取得"""
         try:
-            stack_name = self._get_stack_name()
+            core_stack, healthmanager_stack = self._get_stack_names()
             region = self._get_region()
             
-            print(f"CloudFormation設定取得中: スタック={stack_name}, リージョン={region}")
+            print(f"CloudFormation設定取得中:")
+            print(f"  Cognito設定: {core_stack}")
+            print(f"  Gateway設定: {healthmanager_stack}")
+            print(f"  リージョン: {region}")
             
             cfn = boto3.client('cloudformation', region_name=region)
-            response = cfn.describe_stacks(StackName=stack_name)
             
-            if not response['Stacks']:
-                raise Exception(f"CloudFormationスタック '{stack_name}' が見つかりません")
+            # Healthmate-Coreスタックから認証設定を取得
+            core_response = cfn.describe_stacks(StackName=core_stack)
+            if not core_response['Stacks']:
+                raise Exception(f"CloudFormationスタック '{core_stack}' が見つかりません")
             
-            outputs = {}
-            for output in response['Stacks'][0].get('Outputs', []):
-                outputs[output['OutputKey']] = output['OutputValue']
+            core_outputs = {}
+            for output in core_response['Stacks'][0].get('Outputs', []):
+                core_outputs[output['OutputKey']] = output['OutputValue']
             
-            print(f"CloudFormation出力: {list(outputs.keys())}")
+            # Healthmate-HealthManagerスタックからGateway設定を取得
+            healthmanager_response = cfn.describe_stacks(StackName=healthmanager_stack)
+            if not healthmanager_response['Stacks']:
+                raise Exception(f"CloudFormationスタック '{healthmanager_stack}' が見つかりません")
+            
+            healthmanager_outputs = {}
+            for output in healthmanager_response['Stacks'][0].get('Outputs', []):
+                healthmanager_outputs[output['OutputKey']] = output['OutputValue']
+            
+            print(f"Healthmate-Core出力: {list(core_outputs.keys())}")
+            print(f"Healthmate-HealthManager出力: {list(healthmanager_outputs.keys())}")
             
             # 必要な出力が存在するかチェック
-            required_outputs = ['UserPoolId', 'UserPoolClientId', 'GatewayId']
-            missing_outputs = [key for key in required_outputs if key not in outputs]
-            if missing_outputs:
-                raise Exception(f"必要なCloudFormation出力が見つかりません: {missing_outputs}")
+            required_core_outputs = ['UserPoolId', 'UserPoolClientId']
+            missing_core_outputs = [key for key in required_core_outputs if key not in core_outputs]
+            if missing_core_outputs:
+                raise Exception(f"Healthmate-Coreスタックに必要な出力が見つかりません: {missing_core_outputs}")
             
-            # Cognito Client Secretを取得
-            cognito_client = boto3.client('cognito-idp', region_name=region)
-            client_response = cognito_client.describe_user_pool_client(
-                UserPoolId=outputs['UserPoolId'],
-                ClientId=outputs['UserPoolClientId']
-            )
-            client_secret = client_response['UserPoolClient']['ClientSecret']
+            required_healthmanager_outputs = ['GatewayId']
+            missing_healthmanager_outputs = [key for key in required_healthmanager_outputs if key not in healthmanager_outputs]
+            if missing_healthmanager_outputs:
+                raise Exception(f"Healthmate-HealthManagerスタックに必要な出力が見つかりません: {missing_healthmanager_outputs}")
             
+            # Cognito設定（Client Secretは使用しない）
             config = {
                 'region': region,
-                'user_pool_id': outputs['UserPoolId'],
-                'client_id': outputs['UserPoolClientId'],
-                'client_secret': client_secret,
-                'gateway_id': outputs['GatewayId']
+                'user_pool_id': core_outputs['UserPoolId'],
+                'client_id': core_outputs['UserPoolClientId'],
+                'gateway_id': healthmanager_outputs['GatewayId']
             }
             
             print("✅ CloudFormation設定取得完了")
@@ -93,8 +106,7 @@ class TestConfig:
         return {
             'region': config['region'],
             'user_pool_id': config['user_pool_id'],
-            'client_id': config['client_id'],
-            'client_secret': config['client_secret']
+            'client_id': config['client_id']
         }
     
     def get_gateway_config(self) -> dict:
@@ -118,10 +130,10 @@ if __name__ == "__main__":
         
         print("\n📋 取得した設定:")
         print(f"   リージョン: {config['region']}")
-        print(f"   User Pool ID: {config['user_pool_id']}")
-        print(f"   Client ID: {config['client_id']}")
-        print(f"   Client Secret: {config['client_secret'][:10]}...")
-        print(f"   Gateway ID: {config['gateway_id']}")
+        print(f"   User Pool ID (Healthmate-Core): {config['user_pool_id']}")
+        print(f"   Client ID (Healthmate-Core): {config['client_id']}")
+        print(f"   Gateway ID (Healthmate-HealthManager): {config['gateway_id']}")
+        print("   ✅ Client Secretは使用しません（パブリッククライアント）")
         
         print("\n✅ 設定取得テスト完了")
         

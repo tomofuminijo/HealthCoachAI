@@ -18,6 +18,61 @@ from bedrock_agentcore.runtime import BedrockAgentCoreApp, BedrockAgentCoreConte
 from bedrock_agentcore.memory.integrations.strands.config import AgentCoreMemoryConfig
 from bedrock_agentcore.memory.integrations.strands.session_manager import AgentCoreMemorySessionManager
 
+# M2M認証用デコレータのインポート
+try:
+    from bedrock_agentcore.identity.auth import requires_access_token
+    print("DEBUG: Successfully imported requires_access_token from bedrock_agentcore.identity.auth")
+except ImportError:
+    try:
+        from bedrock_agentcore.runtime import requires_access_token
+        print("DEBUG: Successfully imported requires_access_token from bedrock_agentcore.runtime")
+    except ImportError:
+        try:
+            from bedrock_agentcore import requires_access_token
+            print("DEBUG: Successfully imported requires_access_token from bedrock_agentcore")
+        except ImportError:
+            print("WARNING: Could not import requires_access_token decorator")
+            # フォールバック: デコレータなしで動作するようにダミーを定義
+            def requires_access_token(**kwargs):
+                def decorator(func):
+                    return func
+                return decorator
+            print("DEBUG: Using fallback requires_access_token decorator")
+
+
+# M2M認証設定クラス
+class M2MAuthConfig:
+    """M2M認証設定を管理するクラス"""
+    
+    def __init__(self):
+        self.provider_name = self._get_provider_name()
+        self.cognito_scope = "HealthManager/HealthTarget:invoke"
+        self.auth_flow = "M2M"
+        self.force_authentication = False
+    
+    def _get_provider_name(self) -> str:
+        """AGENTCORE_PROVIDER_NAME環境変数を取得"""
+        provider_name = os.environ.get('AGENTCORE_PROVIDER_NAME')
+        if not provider_name:
+            raise Exception("環境変数 AGENTCORE_PROVIDER_NAME が設定されていません。M2M認証には必須です。")
+        
+        print(f"DEBUG: M2M Provider Name: {provider_name}")
+        return provider_name
+    
+    def get_scopes(self) -> list:
+        """認証スコープのリストを取得"""
+        return [self.cognito_scope]
+    
+    def validate_config(self) -> bool:
+        """設定の妥当性を検証"""
+        if not self.provider_name:
+            return False
+        if not self.cognito_scope:
+            return False
+        if self.auth_flow != "M2M":
+            return False
+        return True
+
 
 # 環境変数設定管理
 def _get_gateway_endpoint() -> str:
@@ -29,15 +84,225 @@ def _get_gateway_endpoint() -> str:
     region = os.environ.get('AWS_REGION', 'us-west-2')
     return f"https://{gateway_id}.gateway.bedrock-agentcore.{region}.amazonaws.com/mcp"
 
-# グローバル変数（JWT処理用）
+
+def _get_memory_id() -> str:
+    """BEDROCK_AGENTCORE_MEMORY_ID環境変数を厳格に検証して取得"""
+    memory_id = os.environ.get('BEDROCK_AGENTCORE_MEMORY_ID')
+    
+    if not memory_id:
+        error_msg = (
+            "環境変数 BEDROCK_AGENTCORE_MEMORY_ID が設定されていません。\n"
+            "AgentCore Memory機能には必須です。\n"
+            "システム管理者に連絡してください。\n"
+            "設定方法: export BEDROCK_AGENTCORE_MEMORY_ID=<your-memory-id>"
+        )
+        print(f"ERROR: {error_msg}")
+        raise Exception(error_msg)
+    
+    # メモリIDの形式を簡単に検証
+    if len(memory_id.strip()) == 0:
+        error_msg = (
+            "環境変数 BEDROCK_AGENTCORE_MEMORY_ID が空です。\n"
+            "有効なメモリIDを設定してください。"
+        )
+        print(f"ERROR: {error_msg}")
+        raise Exception(error_msg)
+    
+    # メモリIDの長さを検証（一般的なAWSリソースIDの最小長）
+    if len(memory_id) < 10:
+        error_msg = (
+            f"環境変数 BEDROCK_AGENTCORE_MEMORY_ID の値が短すぎます（{len(memory_id)}文字）。\n"
+            "有効なメモリIDを設定してください。"
+        )
+        print(f"ERROR: {error_msg}")
+        raise Exception(error_msg)
+    
+    print(f"DEBUG: Memory ID validated successfully: {memory_id}")
+    return memory_id
+
+
+def _validate_memory_config(memory_id: str, session_id: str, actor_id: str) -> bool:
+    """AgentCore Memory設定パラメータの妥当性を検証"""
+    errors = []
+    
+    # メモリIDの検証
+    if not memory_id or len(memory_id.strip()) == 0:
+        errors.append("Memory ID が空です")
+    elif len(memory_id) < 10:
+        errors.append(f"Memory ID が短すぎます（{len(memory_id)}文字）")
+    
+    # セッションIDの検証
+    if not session_id or len(session_id.strip()) == 0:
+        errors.append("Session ID が空です")
+    elif len(session_id) < 33:
+        errors.append(f"Session ID が短すぎます（{len(session_id)}文字、33文字以上が必要）")
+    
+    # アクターIDの検証
+    if not actor_id or len(actor_id.strip()) == 0:
+        errors.append("Actor ID が空です")
+    
+    if errors:
+        error_msg = "AgentCore Memory設定パラメータエラー:\n" + "\n".join(f"  - {error}" for error in errors)
+        print(f"ERROR: {error_msg}")
+        raise Exception(error_msg)
+    
+    print(f"DEBUG: Memory config parameters validated successfully")
+    return True
+
+
+def _validate_required_environment_variables():
+    """必須環境変数の存在を事前に検証"""
+    required_vars = {
+        'AGENTCORE_PROVIDER_NAME': 'M2M認証プロバイダー名',
+        'HEALTHMANAGER_GATEWAY_ID': 'HealthManager MCPゲートウェイID'
+    }
+    
+    missing_vars = []
+    
+    for var_name, description in required_vars.items():
+        value = os.environ.get(var_name)
+        if not value or len(value.strip()) == 0:
+            missing_vars.append(f"  - {var_name}: {description}")
+    
+    if missing_vars:
+        error_msg = (
+            "以下の必須環境変数が設定されていません:\n" +
+            "\n".join(missing_vars) +
+            "\n\nシステム管理者に連絡してください。"
+        )
+        print(f"ERROR: Environment validation failed")
+        print(f"ERROR: {error_msg}")
+        raise Exception(f"環境変数検証エラー: {error_msg}")
+    
+    print(f"DEBUG: All required environment variables are present")
+    return True
+
+# グローバル変数（JWT処理用とM2M認証設定用）
 _current_jwt_token = None
 _current_timezone = None
 _current_language = None
 
+# M2M認証設定のグローバルインスタンス
+try:
+    # 起動時に必須環境変数を検証
+    _validate_required_environment_variables()
+    
+    _m2m_auth_config = M2MAuthConfig()
+    print(f"DEBUG: M2M認証設定が正常に初期化されました")
+    
+    # M2M認証パラメータをグローバル変数として設定
+    _M2M_PROVIDER_NAME = _m2m_auth_config.provider_name
+    _M2M_SCOPES = _m2m_auth_config.get_scopes()
+    
+except Exception as e:
+    print(f"ERROR: M2M認証設定の初期化に失敗しました: {e}")
+    print(f"ERROR: アプリケーションは起動できません")
+    _m2m_auth_config = None
+    _M2M_PROVIDER_NAME = None
+    _M2M_SCOPES = None
+    # 環境変数が不足している場合は起動を中止
+    raise
 
-# JWT Token ヘルパー関数
+
+def _get_m2m_auth_config() -> M2MAuthConfig:
+    """M2M認証設定を取得"""
+    global _m2m_auth_config
+    
+    if _m2m_auth_config is None:
+        try:
+            _m2m_auth_config = M2MAuthConfig()
+        except Exception as e:
+            raise Exception(f"M2M認証設定の取得に失敗しました: {e}")
+    
+    if not _m2m_auth_config.validate_config():
+        raise Exception("M2M認証設定が無効です。環境変数を確認してください。")
+    
+    return _m2m_auth_config
+
+
+def _get_m2m_auth_config() -> M2MAuthConfig:
+    """M2M認証設定を取得"""
+    global _m2m_auth_config
+    
+    if _m2m_auth_config is None:
+        try:
+            _m2m_auth_config = M2MAuthConfig()
+        except Exception as e:
+            raise Exception(f"M2M認証設定の取得に失敗しました: {e}")
+    
+    if not _m2m_auth_config.validate_config():
+        raise Exception("M2M認証設定が無効です。環境変数を確認してください。")
+    
+    return _m2m_auth_config
+
+
+@requires_access_token(
+    provider_name=_M2M_PROVIDER_NAME,
+    scopes=_M2M_SCOPES,
+    auth_flow="M2M",
+    force_authentication=False,
+)
+def get_mcp_client_from_gateway(access_token: str):
+    """
+    M2M認証を使用してMCPクライアントを作成
+    
+    注意: @requires_access_tokenデコレータがaccess_tokenを自動提供
+    私たちは自分でM2M認証を実装する必要はない
+    
+    Args:
+        access_token: @requires_access_tokenデコレータから自動提供されるアクセストークン
+    
+    Returns:
+        MCPクライアント設定情報
+    """
+    try:
+        # M2M認証設定を取得
+        auth_config = _get_m2m_auth_config()
+        
+        # Gateway エンドポイントを取得
+        gateway_endpoint = _get_gateway_endpoint()
+        
+        print(f"DEBUG: Creating MCP client with M2M authentication")
+        print(f"DEBUG: Provider: {auth_config.provider_name}")
+        print(f"DEBUG: Scopes: {auth_config.get_scopes()}")
+        print(f"DEBUG: Gateway: {gateway_endpoint}")
+        print(f"DEBUG: Access token provided by @requires_access_token decorator")
+        
+        if not access_token:
+            raise Exception("@requires_access_tokenデコレータからアクセストークンが提供されませんでした")
+        
+        # MCPクライアント設定を返す
+        return {
+            "gateway_endpoint": gateway_endpoint,
+            "access_token": access_token,
+            "auth_config": {
+                "provider_name": auth_config.provider_name,
+                "scopes": auth_config.get_scopes(),
+                "auth_flow": auth_config.auth_flow
+            }
+        }
+        
+    except Exception as e:
+        print(f"ERROR: MCP client creation failed: {e}")
+        raise Exception(f"MCPクライアント作成エラー: {e}")
+
+
+# JWT Token ヘルパー関数（ユーザー識別専用）
+# 用途: HealthmateUIから渡されるユーザーJWTトークンからユーザーIDを抽出
+# 注意: MCP Gateway認証には使用しない（M2M認証を使用）
 def _decode_jwt_payload(jwt_token: str) -> dict:
-    """JWTトークンのペイロードをデコード（署名検証なし）"""
+    """
+    JWTトークンのペイロードをデコード（署名検証なし）
+    
+    用途: HealthmateUIから渡されるユーザーJWTトークンからユーザー情報を取得
+    注意: MCPゲートウェイ認証には使用しない（M2M認証を使用）
+    
+    Args:
+        jwt_token: HealthmateUIから渡されるユーザーのJWTトークン
+    
+    Returns:
+        JWTペイロードの辞書
+    """
     try:
         # JWTは "header.payload.signature" の形式
         parts = jwt_token.split('.')
@@ -64,7 +329,15 @@ def _decode_jwt_payload(jwt_token: str) -> dict:
 
 
 def _get_jwt_token():
-    """JWT認証トークンを取得（同期版）"""
+    """
+    JWT認証トークンを取得（ユーザー識別用）
+    
+    用途: HealthmateUIから渡されるユーザーJWTトークンを取得
+    注意: MCPゲートウェイ認証には使用しない（M2M認証を使用）
+    
+    Returns:
+        ユーザーのJWTトークン文字列、または None
+    """
     global _current_jwt_token
     
     try:
@@ -105,7 +378,15 @@ def _get_jwt_token():
 
 
 def _get_sub_from_jwt():
-    """JWTトークンからsubを取得（エラーハンドリング強化版）"""
+    """
+    JWTトークンからsubを取得（ユーザー識別用）
+    
+    用途: HealthmateUIから渡されるユーザーJWTトークンからユーザーID（sub）を取得
+    これはAgentCore MemoryのActor IDとして使用されます
+    
+    Returns:
+        ユーザーID（sub）文字列、または None
+    """
     try:
         jwt_token = _get_jwt_token()
         if not jwt_token:
@@ -201,48 +482,232 @@ def _get_localized_datetime(timezone_str: str = 'Asia/Tokyo'):
         return utc_now.astimezone(jst)
 
 
-async def _call_mcp_gateway(method: str, params: dict = None):
-    """MCP Gatewayを呼び出す共通関数"""
-    jwt_token = _get_jwt_token()
+async def _call_mcp_gateway_with_m2m(method: str, params: dict = None):
+    """
+    M2M認証を使用してMCP Gatewayを呼び出す関数
+    
+    用途: Agent → Gateway呼び出しの認証専用
+    注意: @requires_access_tokenデコレータが自動的にM2M認証を処理
+    
+    Args:
+        method: MCPメソッド名
+        params: MCPパラメータ
+    
+    Returns:
+        MCP呼び出し結果
+    
+    Raises:
+        Exception: M2M認証エラー、MCPクライアント作成エラー、通信エラー
+    """
+    print(f"DEBUG: _call_mcp_gateway_with_m2m called with method: {method}")
+    print(f"DEBUG: Using @requires_access_token decorator for M2M authentication")
+    
+    try:
+        # @requires_access_tokenデコレータ付きの関数を呼び出してアクセストークンを取得
+        # デコレータが自動的にaccess_tokenを提供する
+        mcp_client_config = get_mcp_client_from_gateway()
+        access_token = mcp_client_config['access_token']
+        
+        print(f"DEBUG: M2M access token obtained via @requires_access_token decorator")
+        
+        # 取得したアクセストークンでMCP Gatewayを呼び出し
+        return await _call_mcp_gateway(method, params, access_token)
+        
+    except Exception as e:
+        # M2M認証エラーの詳細なログ記録
+        print(f"ERROR: M2M authentication failed: {e}")
+        print(f"ERROR: Method: {method}, Params: {params}")
+        
+        # エラーの種類に応じた詳細なエラーメッセージ
+        if "AGENTCORE_PROVIDER_NAME" in str(e):
+            error_msg = (
+                "M2M認証設定エラー: プロバイダー名が設定されていません。\n"
+                "システム管理者に連絡してください。\n"
+                f"詳細: {e}"
+            )
+        elif "access_token" in str(e).lower():
+            error_msg = (
+                "M2M認証トークン取得エラー: アクセストークンを取得できませんでした。\n"
+                "AgentCore Identityの設定を確認してください。\n"
+                f"詳細: {e}"
+            )
+        elif "MCP" in str(e):
+            error_msg = (
+                "MCPクライアント作成エラー: HealthManager MCPサービスとの通信に失敗しました。\n"
+                "HealthManager MCPサービスが正常に動作しているか確認してください。\n"
+                f"詳細: {e}"
+            )
+        else:
+            error_msg = f"M2M認証エラー: {e}"
+        
+        print(f"ERROR: Formatted error message: {error_msg}")
+        raise Exception(error_msg)
+
+
+async def _call_mcp_gateway(method: str, params: dict = None, access_token: str = None):
+    """
+    MCP Gatewayを呼び出す共通関数（M2M認証専用）
+    
+    Args:
+        method: MCPメソッド名
+        params: MCPパラメータ
+        access_token: M2M認証アクセストークン（必須）
+    
+    Returns:
+        MCP呼び出し結果
+    
+    Raises:
+        Exception: 認証エラー、通信エラー、MCPエラー
+    """
     
     print(f"DEBUG: _call_mcp_gateway called with method: {method}, params: {params}")
-    print(f"DEBUG: JWT token available: {'Yes' if jwt_token else 'No'}")
     
-    if not jwt_token:
-        raise Exception("認証トークンが見つかりません。HealthMate UIから適切に認証されていることを確認してください。")
-    
-    # 環境変数からエンドポイントを取得
-    gateway_endpoint = _get_gateway_endpoint()
-    print(f"DEBUG: Gateway endpoint: {gateway_endpoint}")
-    
-    async with httpx.AsyncClient() as client:
-        payload = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": method
-        }
-        
-        if params:
-            payload["params"] = params
-        
-        response = await client.post(
-            gateway_endpoint,
-            headers={
-                "Authorization": f"Bearer {jwt_token}",
-                "Content-Type": "application/json"
-            },
-            json=payload,
-            timeout=30.0
+    # M2M認証アクセストークンが必須
+    if not access_token:
+        error_msg = (
+            "M2M認証アクセストークンが必要です。\n"
+            "MCP Gateway呼び出しにはM2M認証のみを使用します。\n"
+            "@requires_access_tokenデコレータが正常に動作していない可能性があります。"
         )
+        print(f"ERROR: {error_msg}")
+        raise Exception(error_msg)
+    
+    print(f"DEBUG: Using M2M access token for MCP Gateway authentication")
+    
+    try:
+        # 環境変数からエンドポイントを取得
+        gateway_endpoint = _get_gateway_endpoint()
+        print(f"DEBUG: Gateway endpoint: {gateway_endpoint}")
         
-        if response.status_code != 200:
-            raise Exception(f"HTTP エラー {response.status_code}: {response.text}")
+    except Exception as e:
+        error_msg = (
+            f"Gateway エンドポイント取得エラー: {e}\n"
+            "HEALTHMANAGER_GATEWAY_ID環境変数が正しく設定されているか確認してください。"
+        )
+        print(f"ERROR: {error_msg}")
+        raise Exception(error_msg)
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": method
+            }
+            
+            if params:
+                payload["params"] = params
+            
+            print(f"DEBUG: Sending MCP request to {gateway_endpoint}")
+            print(f"DEBUG: Payload: {payload}")
+            
+            response = await client.post(
+                gateway_endpoint,
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/json"
+                },
+                json=payload,
+                timeout=30.0
+            )
+            
+            print(f"DEBUG: MCP Gateway response status: {response.status_code}")
+            
+            if response.status_code == 401:
+                error_msg = (
+                    "MCP Gateway認証エラー (401): M2M認証トークンが無効です。\n"
+                    "AgentCore Identityの設定とHealthManager MCPサービスの認証設定を確認してください。"
+                )
+                print(f"ERROR: {error_msg}")
+                raise Exception(error_msg)
+            
+            elif response.status_code == 403:
+                error_msg = (
+                    "MCP Gateway認可エラー (403): 必要な権限がありません。\n"
+                    "Cognito スコープ 'HealthManager/HealthTarget:invoke' が正しく設定されているか確認してください。"
+                )
+                print(f"ERROR: {error_msg}")
+                raise Exception(error_msg)
+            
+            elif response.status_code == 404:
+                error_msg = (
+                    "MCP Gateway接続エラー (404): HealthManager MCPサービスが見つかりません。\n"
+                    "HEALTHMANAGER_GATEWAY_ID環境変数とHealthManager MCPサービスのデプロイ状態を確認してください。"
+                )
+                print(f"ERROR: {error_msg}")
+                raise Exception(error_msg)
+            
+            elif response.status_code >= 500:
+                error_msg = (
+                    f"MCP Gatewayサーバーエラー ({response.status_code}): HealthManager MCPサービスで内部エラーが発生しました。\n"
+                    "HealthManager MCPサービスのログを確認してください。\n"
+                    f"レスポンス: {response.text}"
+                )
+                print(f"ERROR: {error_msg}")
+                raise Exception(error_msg)
+            
+            elif response.status_code != 200:
+                error_msg = f"HTTP エラー {response.status_code}: {response.text}"
+                print(f"ERROR: {error_msg}")
+                raise Exception(error_msg)
+            
+            try:
+                result = response.json()
+                print(f"DEBUG: MCP Gateway response parsed successfully")
+                
+            except json.JSONDecodeError as e:
+                error_msg = (
+                    f"MCP Gateway レスポンス解析エラー: JSONの解析に失敗しました。\n"
+                    f"レスポンス: {response.text}\n"
+                    f"詳細: {e}"
+                )
+                print(f"ERROR: {error_msg}")
+                raise Exception(error_msg)
+            
+            if 'error' in result:
+                mcp_error = result['error']
+                error_msg = (
+                    f"MCP プロトコルエラー: {mcp_error}\n"
+                    "HealthManager MCPサービスでエラーが発生しました。\n"
+                    f"メソッド: {method}, パラメータ: {params}"
+                )
+                print(f"ERROR: {error_msg}")
+                raise Exception(error_msg)
+            
+            print(f"DEBUG: MCP Gateway call successful")
+            return result.get('result')
+            
+    except httpx.TimeoutException as e:
+        error_msg = (
+            f"MCP Gateway タイムアウトエラー: 30秒以内に応答がありませんでした。\n"
+            "HealthManager MCPサービスの応答時間を確認してください。\n"
+            f"詳細: {e}"
+        )
+        print(f"ERROR: {error_msg}")
+        raise Exception(error_msg)
         
-        result = response.json()
-        if 'error' in result:
-            raise Exception(f"MCP エラー: {result['error']}")
+    except httpx.ConnectError as e:
+        error_msg = (
+            f"MCP Gateway 接続エラー: HealthManager MCPサービスに接続できませんでした。\n"
+            "ネットワーク接続とHealthManager MCPサービスの稼働状態を確認してください。\n"
+            f"エンドポイント: {gateway_endpoint}\n"
+            f"詳細: {e}"
+        )
+        print(f"ERROR: {error_msg}")
+        raise Exception(error_msg)
         
-        return result.get('result')
+    except Exception as e:
+        # 上記でキャッチされなかった予期しないエラー
+        if "M2M" in str(e) or "認証" in str(e) or "Gateway" in str(e):
+            # 既に適切にフォーマットされたエラーメッセージの場合はそのまま再発生
+            raise e
+        else:
+            error_msg = (
+                f"MCP Gateway 通信で予期しないエラーが発生しました: {e}\n"
+                "システム管理者に連絡してください。"
+            )
+            print(f"ERROR: {error_msg}")
+            raise Exception(error_msg)
 
 
 # 利用可能なツールのリストを取得
@@ -255,7 +720,8 @@ async def list_health_tools() -> str:
         利用可能なツールのリストとスキーマ情報
     """
     try:
-        result = await _call_mcp_gateway("tools/list")
+        # M2M認証を優先して使用
+        result = await _call_mcp_gateway_with_m2m("tools/list")
         
         if not result or 'tools' not in result:
             return "利用可能なツールが見つかりませんでした。"
@@ -302,7 +768,8 @@ async def health_manager_mcp(tool_name: str, arguments: dict) -> str:
         ツールの実行結果
     """
     try:
-        result = await _call_mcp_gateway("tools/call", {
+        # M2M認証を優先して使用
+        result = await _call_mcp_gateway_with_m2m("tools/call", {
             "name": tool_name,
             "arguments": arguments
         })
@@ -374,59 +841,44 @@ async def _create_health_coach_agent_with_memory(session_id: str, actor_id: str)
         
         print(f"DEBUG: Creating AgentCore Memory config - actor_id: {actor_id}, session_id: {session_id}")
         
-        # 環境変数からメモリーIDを取得（AgentCore Runtime環境で設定される）
-        memory_id = os.environ.get('AGENTCORE_MEMORY_ID')
+        # 環境変数からメモリーIDを厳格に取得（フォールバック処理なし）
+        try:
+            memory_id = _get_memory_id()
+        except Exception as e:
+            print(f"ERROR: Memory ID validation failed: {e}")
+            raise Exception(f"AgentCore Memory設定エラー: {e}")
         
-        if not memory_id:
-            # フォールバック: MemoryClientを使って既存のメモリーを検索
-            try:
-                from bedrock_agentcore.memory import MemoryClient
-                memory_client = MemoryClient(region_name="us-west-2")
-                
-                # healthmate_coach_ai_memで始まるメモリーを検索
-                memories_response = memory_client.list_memories()
-                print(f"DEBUG: Memories response type: {type(memories_response)}")
-                print(f"DEBUG: Memories response: {memories_response}")
-                
-                # レスポンスの形式を確認して適切に処理
-                if isinstance(memories_response, dict):
-                    memories_list = memories_response.get('memories', [])
-                elif isinstance(memories_response, list):
-                    memories_list = memories_response
-                else:
-                    memories_list = []
-                
-                for memory in memories_list:
-                    if memory.get('id', '').startswith('healthmate_coach_ai_mem'):
-                        memory_id = memory.get('id')
-                        print(f"DEBUG: Found existing memory: {memory_id}")
-                        break
-                
-                if not memory_id:
-                    raise Exception("既存のメモリーが見つかりませんでした")
-                    
-            except Exception as e:
-                print(f"DEBUG: Memory lookup failed: {e}")
-                raise Exception(f"メモリーIDの取得に失敗しました: {e}")
+        print(f"DEBUG: Using validated memory_id: {memory_id}")
         
-        print(f"DEBUG: Using memory_id: {memory_id}")
+        # メモリ設定パラメータの妥当性を検証
+        try:
+            _validate_memory_config(memory_id, session_id, actor_id)
+        except Exception as e:
+            print(f"ERROR: Memory config validation failed: {e}")
+            raise Exception(f"AgentCore Memory設定検証エラー: {e}")
         
-        # AgentCore Memory設定を作成
-        memory_config = AgentCoreMemoryConfig(
-            memory_id=memory_id,    # 環境変数または動的検索で取得
-            session_id=session_id,  # UI側で生成されるセッションID（会話セッション区切り）
-            actor_id=actor_id       # JWT token の sub（ユーザーごとの長期記憶）
-        )
+        # AgentCore Memory設定を作成（エラーハンドリング強化）
+        try:
+            memory_config = AgentCoreMemoryConfig(
+                memory_id=memory_id,    # 厳格に検証されたメモリID
+                session_id=session_id,  # UI側で生成されるセッションID（会話セッション区切り）
+                actor_id=actor_id       # JWT token の sub（ユーザーごとの長期記憶）
+            )
+            print(f"DEBUG: AgentCore Memory config created successfully")
+        except Exception as e:
+            print(f"ERROR: Failed to create AgentCore Memory config: {e}")
+            raise Exception(f"AgentCore Memory設定の作成に失敗しました: {e}")
         
-        print(f"DEBUG: AgentCore Memory config created successfully")
-        
-        # AgentCoreMemorySessionManagerを作成
-        session_manager = AgentCoreMemorySessionManager(
-            agentcore_memory_config=memory_config,
-            region_name="us-west-2"
-        )
-        
-        print(f"DEBUG: AgentCoreMemorySessionManager created successfully")
+        # AgentCoreMemorySessionManagerを作成（エラーハンドリング強化）
+        try:
+            session_manager = AgentCoreMemorySessionManager(
+                agentcore_memory_config=memory_config,
+                region_name=os.environ.get('AWS_REGION', 'us-west-2')
+            )
+            print(f"DEBUG: AgentCoreMemorySessionManager created successfully")
+        except Exception as e:
+            print(f"ERROR: Failed to create AgentCoreMemorySessionManager: {e}")
+            raise Exception(f"AgentCore Memory セッションマネージャーの作成に失敗しました: {e}")
         
     except Exception as e:
         print(f"ERROR: Failed to create memory session manager: {e}")
@@ -693,7 +1145,10 @@ async def invoke(payload):
     # Use validated session ID (no fallback generation)
     session_id = session_id_from_payload
     
-    # Extract actor ID from JWT
+    # Extract actor ID from JWT (ユーザー識別専用)
+    print(f"DEBUG: Extracting user ID from JWT token for Actor ID")
+    print(f"DEBUG: JWT token usage: User identification only (not for MCP Gateway authentication)")
+    
     actor_id = _get_sub_from_jwt()
     if not actor_id:
         error_msg = "JWT トークンから sub を抽出できませんでした。有効な認証トークンが必要です。"
@@ -709,7 +1164,11 @@ async def invoke(payload):
         }
         return
     
+    print(f"DEBUG: User identification successful - Actor ID: {actor_id}")
     print(f"DEBUG: Session ID: {session_id}, Actor ID: {actor_id}")
+    print(f"DEBUG: Authentication separation:")
+    print(f"DEBUG: - JWT: HealthmateUI → Agent (user identification)")
+    print(f"DEBUG: - M2M: Agent → Gateway (service authentication)")
     
     if not prompt:
         yield {"event": {"contentBlockDelta": {"delta": {"text": "こんにちは！健康に関してどのようなサポートが必要ですか？"}}}}
