@@ -37,29 +37,22 @@ echo "🔍 カスタムIAMロールの存在を確認中..."
 if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
     echo "✅ カスタムIAMロール '$ROLE_NAME' が存在します"
     
-    # IAMロールのポリシーを更新
-    echo "🔄 IAMロールのポリシーを最新版に更新中..."
-    POLICY_NAME="Healthmate-CoachAI-AgentCore-Runtime-Policy"
-    POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/${POLICY_NAME}"
+    # IAMロールのインラインポリシーを更新
+    echo "🔄 IAMロールのインラインポリシーを最新版に更新中..."
+    INLINE_POLICY_NAME="Healthmate-CoachAI-Runtime-Policy"
     
-    # 既存のポリシーバージョンを確認
-    POLICY_EXISTS=$(aws iam get-policy --policy-arn "$POLICY_ARN" 2>/dev/null || echo "")
+    # インラインポリシーを更新（既存の場合は上書き）
+    echo "📜 インラインポリシーを更新中..."
+    aws iam put-role-policy \
+        --role-name "$ROLE_NAME" \
+        --policy-name "$INLINE_POLICY_NAME" \
+        --policy-document file://bedrock-agentcore-runtime-policy.json
     
-    if [ -n "$POLICY_EXISTS" ]; then
-        echo "📜 既存のポリシーを更新中..."
-        # 新しいポリシーバージョンを作成
-        aws iam create-policy-version \
-            --policy-arn "$POLICY_ARN" \
-            --policy-document file://bedrock-agentcore-runtime-policy.json \
-            --set-as-default >/dev/null 2>&1
-        
-        if [ $? -eq 0 ]; then
-            echo "✅ ポリシー更新完了"
-        else
-            echo "⚠️  ポリシー更新に失敗しました。既存のポリシーを使用します。"
-        fi
+    if [ $? -eq 0 ]; then
+        echo "✅ インラインポリシー更新完了"
     else
-        echo "⚠️  ポリシーが見つかりません。新規作成が必要です。"
+        echo "❌ インラインポリシー更新に失敗しました"
+        exit 1
     fi
 else
     echo "❌ カスタムIAMロール '$ROLE_NAME' が見つかりません"
@@ -153,7 +146,8 @@ echo "🚀 M2M認証対応でAgentCore デプロイを開始..."
 agentcore launch \
     --env HEALTHMANAGER_GATEWAY_ID="$GATEWAY_ID" \
     --env AWS_REGION="$AWS_DEFAULT_REGION" \
-    --env AGENTCORE_PROVIDER_NAME="$AGENTCORE_PROVIDER_NAME"
+    --env AGENTCORE_PROVIDER_NAME="$AGENTCORE_PROVIDER_NAME" \
+    --au
 
 echo ""
 echo "✅ M2M認証対応デプロイが完了しました！"

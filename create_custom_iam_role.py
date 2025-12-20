@@ -62,10 +62,10 @@ def create_iam_role_and_policies():
             else:
                 raise
         
-        # 3. ポリシーを作成・アタッチ
+        # 3. インラインポリシーを作成・アタッチ
         policies = [
             {
-                'name': 'Healthmate-CoachAI-AgentCore-Runtime-Policy',
+                'name': 'Healthmate-CoachAI-Runtime-Policy',
                 'file': 'bedrock-agentcore-runtime-policy.json',
                 'description': 'AgentCore Runtime Basic Permissions'
             }
@@ -74,41 +74,23 @@ def create_iam_role_and_policies():
         for policy_info in policies:
             policy_name = policy_info['name']
             policy_file = policy_info['file']
-            policy_description = policy_info['description']
             
-            print(f"📜 ポリシー '{policy_name}' を作成中...")
+            print(f"📜 インラインポリシー '{policy_name}' を作成中...")
             
             # ポリシードキュメントを読み込み
             policy_document = load_policy_document(policy_file)
-            policy_arn = f"arn:aws:iam::{account_id}:policy/{policy_name}"
             
             try:
-                # ポリシーを作成
-                iam.create_policy(
-                    PolicyName=policy_name,
-                    PolicyDocument=json.dumps(policy_document),
-                    Description=policy_description
-                )
-                print(f"   ✅ ポリシー作成完了: {policy_arn}")
-            except ClientError as e:
-                if e.response['Error']['Code'] == 'EntityAlreadyExists':
-                    print(f"   ⚠️  ポリシー '{policy_name}' は既に存在します")
-                else:
-                    raise
-            
-            # ロールにポリシーをアタッチ
-            print(f"🔗 ポリシーをロールにアタッチ中...")
-            try:
-                iam.attach_role_policy(
+                # インラインポリシーをロールに直接アタッチ
+                iam.put_role_policy(
                     RoleName=role_name,
-                    PolicyArn=policy_arn
+                    PolicyName=policy_name,
+                    PolicyDocument=json.dumps(policy_document)
                 )
-                print(f"   ✅ ポリシーアタッチ完了")
+                print(f"   ✅ インラインポリシー作成・アタッチ完了")
             except ClientError as e:
-                if e.response['Error']['Code'] == 'NoSuchEntity':
-                    print(f"   ⚠️  ロールまたはポリシーが見つかりません")
-                else:
-                    print(f"   ⚠️  ポリシーアタッチエラー: {e}")
+                print(f"   ❌ インラインポリシー作成エラー: {e}")
+                raise
         
         # 4. ロール作成完了を待機
         print("⏳ IAMロールの作成完了を待機中...")
@@ -123,11 +105,9 @@ def create_iam_role_and_policies():
         print(f"   🎭 ロール名: {role_name}")
         print(f"   🔗 ロールARN: {role_arn}")
         print()
-        print("📜 アタッチされたポリシー:")
+        print("📜 アタッチされたインラインポリシー:")
         for policy_info in policies:
-            policy_arn = f"arn:aws:iam::{account_id}:policy/{policy_info['name']}"
-            print(f"   - {policy_info['name']}")
-            print(f"     ARN: {policy_arn}")
+            print(f"   - {policy_info['name']} (インラインポリシー)")
         print()
         print("🚀 次のステップ:")
         print("   deploy_to_aws.sh を実行してエージェントをデプロイしてください")
