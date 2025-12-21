@@ -8,28 +8,45 @@ set -e  # エラー時に停止
 echo "🚀 Healthmate-CoachAI エージェントをAWSにデプロイします"
 echo "================================================================================"
 
-# AWS設定
-export AWS_DEFAULT_REGION=${AWS_REGION:-us-west-2}
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo "")
-ROLE_NAME="Healthmate-CoachAI-AgentCore-Runtime-Role"
-CUSTOM_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${ROLE_NAME}"
+# AWS設定と認証情報の設定
+setup_aws_credentials() {
+    export AWS_DEFAULT_REGION=${AWS_REGION:-us-west-2}
+    export AWS_REGION=$AWS_DEFAULT_REGION
+    
+    echo "🔐 AWS認証情報を設定中..."
+    
+    # AWS認証情報の有効性確認
+    if ! aws sts get-caller-identity >/dev/null 2>&1; then
+        echo "❌ AWS認証情報が無効です"
+        echo "   以下のいずれかの方法でAWS認証を設定してください:"
+        echo "   1. aws login (推奨)"
+        echo "   2. aws configure (アクセスキー)"
+        echo "   3. aws sso login (SSO)"
+        exit 1
+    fi
+    
+    echo "✅ AWS認証情報が有効です"
+    
+    # aws configure export-credentials を使用して認証情報を取得（aws login対応）
+    if CREDS_OUTPUT=$(aws configure export-credentials --format env 2>/dev/null) && [ -n "$CREDS_OUTPUT" ]; then
+        eval "$CREDS_OUTPUT"
+        echo "   認証方式: aws login (一時的な認証情報)"
+    else
+        echo "   認証方式: 既存の設定を使用"
+    fi
+    
+    # アカウントIDとロール設定
+    ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+    ROLE_NAME="Healthmate-CoachAI-AgentCore-Runtime-Role"
+    CUSTOM_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${ROLE_NAME}"
+    
+    echo "📍 リージョン: $AWS_REGION"
+    echo "🏢 アカウントID: $ACCOUNT_ID"
+    echo "🎭 カスタムロール: $CUSTOM_ROLE_ARN"
+}
 
-echo "🔐 AWS設定を確認中..."
-echo "📍 リージョン: $AWS_DEFAULT_REGION"
-echo "🏢 アカウントID: $ACCOUNT_ID"
-echo "🎭 カスタムロール: $CUSTOM_ROLE_ARN"
-
-# AWS認証情報の確認
-if [ -z "$ACCOUNT_ID" ]; then
-    echo "❌ AWS認証情報が設定されていません。"
-    echo "   以下のいずれかの方法でAWS認証を設定してください:"
-    echo "   1. aws configure"
-    echo "   2. 環境変数 (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)"
-    echo "   3. IAMロール (EC2/Lambda等)"
-    exit 1
-fi
-
-echo "✅ AWS認証情報確認完了"
+# AWS設定を実行
+setup_aws_credentials
 
 # カスタムIAMロールの存在確認
 echo ""
@@ -122,6 +139,8 @@ fi
 echo "✅ Gateway ID取得成功: $GATEWAY_ID"
 
 # AgentCore設定でカスタムロールを指定
+echo ""
+echo "� AgeentCore設定を実行中..."
 agentcore configure \
     --entrypoint healthmate_coach_ai/agent.py \
     --name healthmate_coach_ai \
@@ -139,71 +158,43 @@ echo "🚀 AgentCore デプロイを開始します..."
 echo "   エージェント名: healthmate_coach_ai"
 echo "   エントリーポイント: healthmate_coach_ai/agent.py"
 echo "   カスタムIAMロール: $CUSTOM_ROLE_ARN"
-echo ""
 
-# M2M認証設定
-echo ""
-echo "🔐 M2M認証設定を準備中..."
+# M2M認証とAIモデル設定
 AGENTCORE_PROVIDER_NAME="healthmanager-oauth2-provider"
-echo "   プロバイダー名: $AGENTCORE_PROVIDER_NAME"
+HEALTHMATE_AI_MODEL=${HEALTHMATE_AI_MODEL:-"us.amazon.nova-2-lite-v1:0"}
+# HEALTHMATE_AI_MODEL=${HEALTHMATE_AI_MODEL:-"global.anthropic.claude-sonnet-4-5-20250929-v1:0"}
 
-# AIモデル設定（手動変更可能）
 echo ""
-echo "🤖 AIモデル設定を準備中..."
-HEALTHMATE_AI_MODEL=${HEALTHMATE_AI_MODEL:-"global.anthropic.claude-sonnet-4-5-20250929-v1:0"}
-echo "   使用モデル: $HEALTHMATE_AI_MODEL"
-echo "   💡 モデルを変更する場合は環境変数 HEALTHMATE_AI_MODEL を設定してください"
-echo "      例: export HEALTHMATE_AI_MODEL=\"global.anthropic.claude-3-5-sonnet-20241022-v2:0\""
-
-# 必須環境変数の検証
-echo ""
-echo "🔍 必須環境変数を検証中..."
+echo "🔍 デプロイ設定:"
 echo "   ✅ HEALTHMANAGER_GATEWAY_ID: $GATEWAY_ID"
-echo "   ✅ AWS_REGION: $AWS_DEFAULT_REGION"
+echo "   ✅ AWS_REGION: $AWS_REGION"
 echo "   ✅ AGENTCORE_PROVIDER_NAME: $AGENTCORE_PROVIDER_NAME"
 echo "   ✅ HEALTHMATE_AI_MODEL: $HEALTHMATE_AI_MODEL"
 
-# AgentCore デプロイを実行（M2M認証環境変数付き）
+# AgentCore デプロイを実行
 echo ""
-echo "🚀 M2M認証対応でAgentCore デプロイを開始..."
+echo "🚀 AgentCore デプロイを開始..."
 agentcore launch \
     --env HEALTHMANAGER_GATEWAY_ID="$GATEWAY_ID" \
-    --env AWS_REGION="$AWS_DEFAULT_REGION" \
+    --env AWS_REGION="$AWS_REGION" \
     --env AGENTCORE_PROVIDER_NAME="$AGENTCORE_PROVIDER_NAME" \
     --env HEALTHMATE_AI_MODEL="$HEALTHMATE_AI_MODEL"
 
 echo ""
-echo "✅ M2M認証対応デプロイが完了しました！"
+echo "✅ デプロイが完了しました！"
 echo ""
 echo "📋 デプロイ情報:"
-echo "   🎭 使用したIAMロール: $CUSTOM_ROLE_ARN"
-echo "   📍 リージョン: $AWS_DEFAULT_REGION"
+echo "   🎭 IAMロール: $CUSTOM_ROLE_ARN"
+echo "   📍 リージョン: $AWS_REGION"
 echo "   🏢 アカウント: $ACCOUNT_ID"
 echo "   🔐 M2Mプロバイダー: $AGENTCORE_PROVIDER_NAME"
 echo "   🤖 AIモデル: $HEALTHMATE_AI_MODEL"
 echo ""
-echo "🔐 IAMロールに含まれる権限:"
-echo "   ✅ AgentCore Runtime基本権限"
-echo "   ✅ CloudFormation読み取り権限"
-echo "   ✅ Cognito読み取り権限"
-echo "   ✅ M2M認証権限"
-echo ""
-echo "🔧 M2M認証設定:"
-echo "   ✅ Provider Name: $AGENTCORE_PROVIDER_NAME"
-echo "   ✅ Cognito Scope: HealthManager/HealthTarget:invoke"
-echo "   ✅ Auth Flow: M2M"
-echo "   ✅ Gateway ID: $GATEWAY_ID"
-echo "   ✅ Memory: AgentCore Runtime自動生成"
-echo ""
-echo "🤖 AIモデル設定:"
-echo "   ✅ 現在のモデル: $HEALTHMATE_AI_MODEL"
-echo "   💡 モデル変更方法: export HEALTHMATE_AI_MODEL=\"新しいモデル名\" && ./deploy_to_aws.sh"
-echo ""
-echo "📋 次のステップ:"
+echo "� 次のステップ:"ま
 echo "   1. agentcore status でエージェント状態を確認"
-echo "   2. manual_test_deployed_agent.py でテスト実行"
-echo "   3. HealthMate UI からエージェントを呼び出し"
+echo "   2. python manual_test_deployed_agent.py でテスト実行"
+echo "   3. HealthmateUI からエージェントを呼び出し"
 echo ""
-echo "🧪 テスト実行コマンド:"
-echo "   python3 manual_test_deployed_agent.py"
+echo "💡 モデル変更方法:"
+echo "   export HEALTHMATE_AI_MODEL=\"新しいモデル名\" && ./deploy_to_aws.sh"
 echo ""
