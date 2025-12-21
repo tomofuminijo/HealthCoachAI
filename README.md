@@ -7,17 +7,17 @@ Amazon Bedrock AgentCore Runtime上で動作する健康支援AIエージェン�
 Healthmate-CoachAIは、ユーザーの健康目標達成を支援するAIエージェントです。以下の機能を提供します：
 
 - 健康データの分析とパーソナライズされたアドバイス
-- 健康目標の設定と進捗追跡
+- 健康目標の設定と進捗追跤
 - 運動や食事に関する実践的な指導
 - モチベーション維持のためのサポート
 
 ## 主な機能
 
-### 🔐 M2M認証統合
-- **自動M2M認証**: `@requires_access_token`デコレータによる自動認証
+### 🔐 JWT認証統合（2024年12月更新）
+- **JWT認証**: Cognito JWTトークンによるユーザー認証
 - **認証の分離**: JWT（ユーザー識別）とM2M（サービス認証）の適切な分離
-- **環境変数管理**: `AGENTCORE_PROVIDER_NAME`による設定管理
-- **エラーハンドリング**: 詳細なエラーメッセージと自動フォールバック
+- **Discovery URL**: Cognito OpenID Connect Discovery URLによる自動設定
+- **Client ID検証**: `allowedClients`配列による厳密なクライアント検証
 
 ### 🧠 AgentCore Memory統合
 - **セッション継続性**: 会話の文脈を記憶し、継続的な対話を実現
@@ -90,7 +90,7 @@ export HEALTHMATE_AI_MODEL="global.anthropic.claude-sonnet-4-5-20250929-v1:0"
 ### 3. ワンコマンドデプロイ
 
 ```bash
-# カスタムIAMロール自動作成 + M2M認証設定 + デプロイ
+# JWT認証設定 + カスタムIAMロール自動作成 + デプロイ
 ./deploy_to_aws.sh
 
 # 異なるAIモデルを使用する場合
@@ -100,7 +100,8 @@ export HEALTHMATE_AI_MODEL="global.anthropic.claude-3-5-sonnet-20241022-v2:0"
 
 このスクリプトは以下を自動実行します：
 - カスタムIAMロールの作成（必要な場合）
-- M2M認証に必要な権限ポリシーのアタッチ
+- Cognito設定の自動取得（CloudFormationから）
+- JWT認証設定（Discovery URL + allowedClients）
 - AgentCore Runtime設定
 - エージェントのデプロイ
 - M2M認証プロバイダーの設定
@@ -111,15 +112,86 @@ export HEALTHMATE_AI_MODEL="global.anthropic.claude-3-5-sonnet-20241022-v2:0"
 # エージェント状態確認
 agentcore status
 
-# デプロイ済みエージェントのテスト（M2M認証対応）
+# デプロイ済みエージェントのテスト（JWT認証対応）
 python manual_test_deployed_agent.py
 ```
 
 ## 🔧 詳細設定
 
+### JWT認証設定（2024年12月更新）
+
+AgentCore RuntimeはCognito JWT認証を使用します：
+
+#### 認証設定の自動構成
+
+デプロイスクリプトが以下を自動的に設定します：
+
+```bash
+# Cognito設定の自動取得（CloudFormationから）
+USER_POOL_ID=$(aws cloudformation describe-stacks \
+    --stack-name Healthmate-CoreStack \
+    --query 'Stacks[0].Outputs[?OutputKey==`UserPoolId`].OutputValue' \
+    --output text)
+
+USER_POOL_CLIENT_ID=$(aws cloudformation describe-stacks \
+    --stack-name Healthmate-CoreStack \
+    --query 'Stacks[0].Outputs[?OutputKey==`UserPoolClientId`].OutputValue' \
+    --output text)
+
+# JWT Discovery URLの構築
+JWT_DISCOVERY_URL="https://cognito-idp.${AWS_REGION}.amazonaws.com/${USER_POOL_ID}/.well-known/openid-configuration"
+
+# AgentCore設定への適用
+AUTHORIZER_CONFIG="{\"customJWTAuthorizer\":{\"discoveryUrl\":\"${JWT_DISCOVERY_URL}\",\"allowedClients\":[\"${USER_POOL_CLIENT_ID}\"]}}"
+```
+
+#### JWT認証の仕組み
+
+```
+┌─────────────────┐    JWT Access Token    ┌──────────────────┐
+│   HealthmateUI  │ ──────────────────────▶│ AgentCore Runtime│
+│                 │                         │                  │
+│ 1. Cognito認証  │                         │ 2. JWT検証       │
+│ 2. Access Token │                         │    - Discovery   │
+│    取得         │                         │    - Client ID   │
+│                 │                         │    - Signature   │
+└─────────────────┘                         └──────────────────┘
+                                                     │
+                                                     ▼
+                                            ┌──────────────────┐
+                                            │ Healthmate-CoachAI│
+                                            │                  │
+                                            │ 3. User ID抽出   │
+                                            │    (JWT sub)     │
+                                            │ 4. M2M認証       │
+                                            │    (Gateway用)   │
+                                            └──────────────────┘
+```
+
+#### 重要な注意事項
+
+**Access Token vs ID Token**:
+- ✅ **Access Token使用**: `client_id`クレームを含む（AgentCore検証に必要）
+- ❌ **ID Token使用不可**: `aud`クレームのみ（検証エラー）
+
+**JWT認証設定**:
+```yaml
+# .bedrock_agentcore.yaml（自動生成）
+agents:
+  healthmate_coach_ai:
+    bedrock_agentcore:
+      authorizer_config:
+        customJWTAuthorizer:
+          discoveryUrl: "https://cognito-idp.us-west-2.amazonaws.com/us-west-2_xxxxx/.well-known/openid-configuration"
+          allowedClients:
+            - "your-cognito-client-id"
+      request_header_allowlist:
+        - "Authorization"
+```
+
 ### M2M認証設定
 
-M2M認証リファクタリング後の設定要件：
+M2M認証は引き続きHealthManagerMCP Gatewayへのアクセスに使用されます：
 
 #### 必須環境変数
 ```bash
@@ -199,7 +271,7 @@ export HEALTHMATE_AI_MODEL="global.anthropic.claude-sonnet-4-5-20250929-v1:0"
 
 ### デプロイ済みエージェントテスト（推奨）
 
-M2M認証リファクタリング後のメインテストツール：
+JWT認証統合後のメインテストツール：
 
 ```bash
 # デプロイ済みエージェントの包括的テスト
@@ -207,10 +279,10 @@ python manual_test_deployed_agent.py
 ```
 
 **主な機能**:
-- ✅ **M2M認証テスト**: 自動M2M認証の動作確認
+- ✅ **JWT認証テスト**: Cognito Access Tokenによる認証確認
 - ✅ **17個のMCPツール確認**: HealthManagerMCPサービスとの連携テスト
 - ✅ **セッション継続性テスト**: AgentCore Memoryの動作確認
-- ✅ **JWT認証テスト**: ユーザー識別の動作確認
+- ✅ **M2M認証テスト**: Gateway接続の自動認証確認
 - ✅ **マルチライン入力対応**: 複雑なクエリの入力
 - ✅ **ストリーミング対応**: リアルタイム応答表示
 - ✅ **DynamoDB確認用ユーザーID表示**: データベース確認支援
@@ -245,7 +317,7 @@ python manual_test_deployed_agent.py
 python manual_test_agent.py
 ```
 
-**注意**: このテストはClient Secretを使用する古い認証方式です。M2M認証リファクタリング後は`manual_test_deployed_agent.py`の使用を推奨します。
+**注意**: このテストはClient Secretを使用する古い認証方式です。JWT認証統合後は`manual_test_deployed_agent.py`の使用を推奨します。
 
 ### 自動テスト
 
@@ -258,6 +330,296 @@ python test_config_helper.py
 ```
 
 ## 📋 API仕様
+
+### エンドポイント情報
+
+**AgentCore Runtime エンドポイント**:
+```
+https://bedrock-agentcore.{region}.amazonaws.com/runtimes/{url_encoded_agent_arn}/invocations?qualifier=DEFAULT
+```
+
+**認証ヘッダー**:
+```http
+Authorization: Bearer {cognito_access_token}
+Content-Type: application/json
+X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: {session_id}
+```
+
+### クライアントからの呼び出し方法
+
+#### 1. Python（requests）での呼び出し
+
+```python
+import requests
+import urllib.parse
+import json
+
+# 設定
+region = "us-west-2"
+agent_arn = "arn:aws:bedrock-agentcore:us-west-2:123456789012:agent/healthmate_coach_ai"
+access_token = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."  # Cognito Access Token
+session_id = "healthmate-chat-1234567890-abcdef"
+
+# エンドポイントURL構築
+escaped_agent_arn = urllib.parse.quote(agent_arn, safe='')
+endpoint_url = f"https://bedrock-agentcore.{region}.amazonaws.com/runtimes/{escaped_agent_arn}/invocations?qualifier=DEFAULT"
+
+# ペイロード構築
+payload = {
+    "prompt": "こんにちは！今日の健康状態はいかがですか？",
+    "sessionState": {
+        "sessionAttributes": {
+            "session_id": session_id,
+            "jwt_token": access_token,
+            "timezone": "Asia/Tokyo",
+            "language": "ja"
+        }
+    }
+}
+
+# リクエスト送信
+headers = {
+    "Authorization": f"Bearer {access_token}",
+    "Content-Type": "application/json",
+    "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id": session_id
+}
+
+response = requests.post(endpoint_url, headers=headers, json=payload, stream=True)
+
+# ストリーミングレスポンス処理
+for line in response.iter_lines(decode_unicode=True):
+    if line and line.startswith('data: '):
+        try:
+            data_json = line[6:]  # "data: " を除去
+            if data_json.strip():
+                event_data = json.loads(data_json)
+                # contentBlockDelta イベントからテキストを抽出
+                if 'event' in event_data and 'contentBlockDelta' in event_data['event']:
+                    delta = event_data['event']['contentBlockDelta'].get('delta', {})
+                    if 'text' in delta:
+                        print(delta['text'], end='', flush=True)
+        except json.JSONDecodeError:
+            continue
+```
+
+#### 2. JavaScript（fetch）での呼び出し
+
+```javascript
+// 設定
+const region = "us-west-2";
+const agentArn = "arn:aws:bedrock-agentcore:us-west-2:123456789012:agent/healthmate_coach_ai";
+const accessToken = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."; // Cognito Access Token
+const sessionId = "healthmate-chat-1234567890-abcdef";
+
+// エンドポイントURL構築
+const escapedAgentArn = encodeURIComponent(agentArn);
+const endpointUrl = `https://bedrock-agentcore.${region}.amazonaws.com/runtimes/${escapedAgentArn}/invocations?qualifier=DEFAULT`;
+
+// ペイロード構築
+const payload = {
+    prompt: "こんにちは！今日の健康状態はいかがですか？",
+    sessionState: {
+        sessionAttributes: {
+            session_id: sessionId,
+            jwt_token: accessToken,
+            timezone: "Asia/Tokyo",
+            language: "ja"
+        }
+    }
+};
+
+// リクエスト送信
+const response = await fetch(endpointUrl, {
+    method: 'POST',
+    headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id': sessionId
+    },
+    body: JSON.stringify(payload)
+});
+
+// ストリーミングレスポンス処理
+const reader = response.body.getReader();
+const decoder = new TextDecoder();
+
+while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    
+    const chunk = decoder.decode(value);
+    const lines = chunk.split('\n');
+    
+    for (const line of lines) {
+        if (line.startsWith('data: ')) {
+            try {
+                const dataJson = line.substring(6); // "data: " を除去
+                if (dataJson.trim()) {
+                    const eventData = JSON.parse(dataJson);
+                    // contentBlockDelta イベントからテキストを抽出
+                    if (eventData.event && eventData.event.contentBlockDelta) {
+                        const delta = eventData.event.contentBlockDelta.delta;
+                        if (delta && delta.text) {
+                            console.log(delta.text);
+                        }
+                    }
+                }
+            } catch (e) {
+                // JSON解析エラーは無視
+            }
+        }
+    }
+}
+```
+
+#### 3. FastAPI（HealthmateUI）での呼び出し
+
+```python
+import httpx
+import urllib.parse
+from fastapi import HTTPException
+
+class HealthCoachClient:
+    def __init__(self, region: str, agent_arn: str):
+        self.region = region
+        self.agent_arn = agent_arn
+        self.endpoint_url = self._build_endpoint_url()
+    
+    def _build_endpoint_url(self) -> str:
+        escaped_arn = urllib.parse.quote(self.agent_arn, safe='')
+        return f"https://bedrock-agentcore.{self.region}.amazonaws.com/runtimes/{escaped_arn}/invocations?qualifier=DEFAULT"
+    
+    async def send_message(self, 
+                          message: str, 
+                          session_id: str, 
+                          access_token: str,
+                          timezone: str = "Asia/Tokyo",
+                          language: str = "ja") -> str:
+        """HealthCoachAIにメッセージを送信"""
+        
+        payload = {
+            "prompt": message,
+            "sessionState": {
+                "sessionAttributes": {
+                    "session_id": session_id,
+                    "jwt_token": access_token,
+                    "timezone": timezone,
+                    "language": language
+                }
+            }
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id": session_id
+        }
+        
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    self.endpoint_url,
+                    headers=headers,
+                    json=payload,
+                    timeout=30.0
+                )
+                response.raise_for_status()
+                
+                # ストリーミングレスポンスの処理
+                response_text = ""
+                async for line in response.aiter_lines():
+                    if line.startswith('data: '):
+                        try:
+                            data_json = line[6:]  # "data: " を除去
+                            if data_json.strip():
+                                event_data = json.loads(data_json)
+                                if 'event' in event_data and 'contentBlockDelta' in event_data['event']:
+                                    delta = event_data['event']['contentBlockDelta'].get('delta', {})
+                                    if 'text' in delta:
+                                        response_text += delta['text']
+                        except json.JSONDecodeError:
+                            continue
+                
+                return response_text
+                
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 401:
+                    raise HTTPException(status_code=401, detail="JWT認証エラー: アクセストークンが無効です")
+                elif e.response.status_code == 403:
+                    raise HTTPException(status_code=403, detail="認可エラー: 必要な権限がありません")
+                else:
+                    raise HTTPException(status_code=e.response.status_code, detail=f"AgentCore Runtime エラー: {e}")
+
+# 使用例
+coach_client = HealthCoachClient(
+    region="us-west-2",
+    agent_arn="arn:aws:bedrock-agentcore:us-west-2:123456789012:agent/healthmate_coach_ai"
+)
+
+response = await coach_client.send_message(
+    message="今日の運動記録を確認してください",
+    session_id="healthmate-chat-1234567890-abcdef",
+    access_token=cognito_access_token
+)
+```
+
+### 認証フロー詳細
+
+#### 1. Cognito認証（クライアント側）
+
+```python
+import boto3
+from botocore.exceptions import ClientError
+
+def authenticate_user(username: str, password: str, user_pool_id: str, client_id: str) -> str:
+    """Cognito認証を実行してAccess Tokenを取得"""
+    
+    cognito_client = boto3.client('cognito-idp', region_name='us-west-2')
+    
+    try:
+        # USER_PASSWORD_AUTH フローで認証
+        response = cognito_client.initiate_auth(
+            ClientId=client_id,
+            AuthFlow='USER_PASSWORD_AUTH',
+            AuthParameters={
+                'USERNAME': username,
+                'PASSWORD': password
+            }
+        )
+        
+        # Access Tokenを返す（ID Tokenではない）
+        return response['AuthenticationResult']['AccessToken']
+        
+    except ClientError as e:
+        raise Exception(f"Cognito認証エラー: {e}")
+
+# 使用例
+access_token = authenticate_user(
+    username="user@example.com",
+    password="password123",
+    user_pool_id="us-west-2_xxxxxxxxx",
+    client_id="your-cognito-client-id"
+)
+```
+
+#### 2. セッション管理
+
+```python
+import uuid
+
+def generate_session_id() -> str:
+    """AgentCore Memory要件に準拠したセッションIDを生成（33文字以上）"""
+    return f"healthmate-chat-{uuid.uuid4().hex}"
+
+def validate_session_id(session_id: str) -> bool:
+    """セッションIDの妥当性を検証"""
+    return len(session_id) >= 33
+
+# 使用例
+session_id = generate_session_id()
+print(f"生成されたセッションID: {session_id}")  # healthmate-chat-1234567890abcdef1234567890abcdef
+print(f"文字数: {len(session_id)}")  # 47文字（33文字以上の要件を満たす）
+```
 
 ### ペイロード構造
 
@@ -289,23 +651,39 @@ HealthmateUI サービスから送信される最適化されたペイロード�
 
 ### 認証アーキテクチャ
 
-M2M認証リファクタリング後の認証フロー：
+JWT認証統合後の認証フロー：
 
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   HealthmateUI  │    │ Healthmate-CoachAI │    │ HealthManagerMCP│
+│   HealthmateUI  │    │ AgentCore Runtime│    │ Healthmate-CoachAI│
 │                 │    │                  │    │                 │
-│ JWT Token       │───▶│ JWT Processing   │    │                 │
-│ (User ID)       │    │ (User Identity)  │    │                 │
-│                 │    │        +         │───▶│ MCP Tools       │
-│                 │    │ M2M Authentication│    │ (Service Auth)  │
-│                 │    │ (Service Auth)   │    │                 │
+│ 1. Cognito認証  │───▶│ 2. JWT検証       │───▶│ 3. JWT処理      │
+│ 2. Access Token │    │    - Discovery   │    │    - User ID    │
+│    取得         │    │    - Client ID   │    │    - 抽出       │
+│                 │    │    - Signature   │    │                 │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
+                                                        │
+                                                        ▼
+                                               ┌─────────────────┐
+                                               │ HealthManagerMCP│
+                                               │                 │
+                                               │ 4. M2M認証      │
+                                               │    (Service)    │
+                                               │ 5. Health Data  │
+                                               │    Operations   │
+                                               └─────────────────┘
 ```
 
 **認証の分離**:
-- **JWT認証**: ユーザー識別専用（HealthmateUI → Agent）
-- **M2M認証**: サービス認証専用（Agent → Gateway）
+- **JWT認証**: ユーザー識別専用（UI → AgentCore Runtime → Agent）
+- **M2M認証**: サービス認証専用（Agent → MCP Gateway）
+
+**JWT検証プロセス**:
+1. **Discovery URL取得**: Cognito OpenID Connect設定を自動取得
+2. **公開鍵取得**: JWT署名検証用の公開鍵を取得
+3. **Client ID検証**: `allowedClients`配列でクライアントIDを検証
+4. **署名検証**: JWT署名の妥当性を検証
+5. **有効期限確認**: トークンの有効期限を確認
 
 ### 自動処理される情報
 
@@ -398,23 +776,31 @@ Healthmate-CoachAI/
 ### 主要ファイルの説明
 
 #### 🚀 デプロイ・設定
-- **`deploy_to_aws.sh`**: M2M認証対応のワンコマンドデプロイ
+- **`deploy_to_aws.sh`**: JWT認証対応のワンコマンドデプロイ
 - **`create_custom_iam_role.py`**: M2M認証に必要な権限を含むIAMロール作成
 - **`bedrock-agentcore-runtime-policy.json`**: M2M認証権限を含むポリシー定義
 
 #### 🧪 テスト・開発
-- **`manual_test_deployed_agent.py`**: M2M認証対応のメインテストツール
+- **`manual_test_deployed_agent.py`**: JWT認証対応のメインテストツール
 - **`test_config_helper.py`**: CloudFormation統合テスト
 - **`test_memory_integration.py`**: AgentCore Memory機能テスト
 
 #### 🤖 エージェント実装
 - **`healthmate_coach_ai/agent.py`**: 
-  - M2M認証統合（`@requires_access_token`）
   - JWT処理（ユーザー識別専用）
+  - M2M認証統合（`@requires_access_token`）
   - AgentCore Memory統合
   - 17個のMCPツール連携
 
 ## 🔒 セキュリティ
+
+### JWT認証セキュリティ
+
+- **Discovery URL検証**: Cognito OpenID Connect設定による自動検証
+- **Client ID検証**: `allowedClients`配列による厳密なクライアント制限
+- **署名検証**: JWT署名の暗号学的検証
+- **有効期限確認**: トークンの時間ベース検証
+- **Access Token使用**: `client_id`クレーム含有（ID Tokenは使用不可）
 
 ### M2M認証セキュリティ
 
@@ -486,12 +872,14 @@ export AWS_REGION="your-aws-region"
 ### AWSへのデプロイ
 
 ```bash
-# M2M認証対応のワンコマンドデプロイ
+# JWT認証対応のワンコマンドデプロイ
 ./deploy_to_aws.sh
 ```
 
 **デプロイ内容**:
 - カスタムIAMロール作成（M2M認証権限含む）
+- Cognito設定の自動取得（CloudFormationから）
+- JWT認証設定（Discovery URL + allowedClients）
 - AgentCore Runtime設定
 - M2M認証プロバイダー設定
 - AgentCore Memory設定
@@ -512,16 +900,58 @@ python manual_test_deployed_agent.py
 
 **期待される結果**:
 - ✅ Agent Runtime ARNが表示される
+- ✅ JWT認証が正常に動作する
 - ✅ 17個のMCPツールにアクセス可能
 - ✅ セッション継続性が動作する
 - ✅ M2M認証が自動で動作する
 
 ### HealthmateUIからの呼び出し
 
+JWT認証統合後の呼び出しフロー：
+
 1. **UIでCognito認証を実行**
-2. **JWTトークンがエージェントに自動的に渡される**
-3. **エージェントがユーザーIDを自動抽出して動作**
-4. **M2M認証で HealthManagerMCPサービスにアクセス**
+   ```python
+   # Cognito認証でAccess Tokenを取得
+   access_token = cognito_client.initiate_auth(...)['AuthenticationResult']['AccessToken']
+   ```
+
+2. **AgentCore RuntimeエンドポイントにHTTPSリクエスト**
+   ```python
+   headers = {
+       "Authorization": f"Bearer {access_token}",
+       "Content-Type": "application/json",
+       "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id": session_id
+   }
+   
+   payload = {
+       "prompt": user_message,
+       "sessionState": {
+           "sessionAttributes": {
+               "session_id": session_id,
+               "jwt_token": access_token,
+               "timezone": "Asia/Tokyo",
+               "language": "ja"
+           }
+       }
+   }
+   ```
+
+3. **AgentCore RuntimeがJWT検証を実行**
+   - Discovery URLから公開鍵を取得
+   - Client IDを`allowedClients`で検証
+   - JWT署名と有効期限を検証
+
+4. **エージェントがユーザーIDを自動抽出して動作**
+   ```python
+   # agent.py内で自動実行
+   user_id = jwt_payload.get('sub')  # JWTのsubクレームからユーザーID抽出
+   ```
+
+5. **M2M認証で HealthManagerMCPサービスにアクセス**
+   ```python
+   # @requires_access_tokenデコレータが自動実行
+   mcp_access_token = get_m2m_token()  # M2M認証トークン取得
+   ```
 
 ## 🧠 AgentCore Memory統合
 
@@ -605,17 +1035,45 @@ rm -rf .bedrock_agentcore
 ### アンデプロイ後の状態
 
 - ✅ 全てのAWSリソースが削除される
+- ✅ JWT認証設定が削除される
 - ✅ M2M認証設定が削除される
 - ✅ AgentCore Memoryリソースが削除される
 - ✅ AWSコストが発生しなくなる
 - ✅ ローカル設定ファイルがクリーンアップされる
-- 🔄 `./deploy_to_aws.sh` で再デプロイ可能（M2M認証・メモリ統合含む）
+- 🔄 `./deploy_to_aws.sh` で再デプロイ可能（JWT認証・M2M認証・メモリ統合含む）
 
 ## 🛠️ トラブルシューティング
 
 ### よくある問題
 
-#### 1. M2M認証エラー
+#### 1. JWT認証エラー
+```
+ERROR: JWT認証エラー: アクセストークンが無効です
+```
+**解決方法**:
+```bash
+# Cognito設定を確認
+aws cloudformation describe-stacks --stack-name Healthmate-CoreStack
+
+# JWT Discovery URLの確認
+echo "https://cognito-idp.${AWS_REGION}.amazonaws.com/${USER_POOL_ID}/.well-known/openid-configuration"
+
+# Access Token（ID Tokenではない）を使用していることを確認
+```
+
+#### 2. Client ID不一致エラー
+```
+ERROR: JWT Client ID validation failed
+```
+**解決方法**:
+```bash
+# allowedClientsの確認
+cat .bedrock_agentcore.yaml | grep -A 5 allowedClients
+
+# Access Tokenのclient_idクレーム確認（ID Tokenのaudクレームではない）
+```
+
+#### 3. M2M認証エラー
 ```
 ERROR: M2M認証設定エラー: プロバイダー名が設定されていません
 ```
@@ -628,7 +1086,7 @@ echo $AGENTCORE_PROVIDER_NAME
 ./deploy_to_aws.sh
 ```
 
-#### 2. MCP接続エラー
+#### 4. MCP接続エラー
 ```
 ERROR: MCP Gateway接続エラー (404): HealthManager MCPサービスが見つかりません
 ```
@@ -641,7 +1099,7 @@ aws cloudformation describe-stacks --stack-name Healthmate-HealthManagerStack
 echo $HEALTHMANAGER_GATEWAY_ID
 ```
 
-#### 3. セッション継続性エラー
+#### 5. セッション継続性エラー
 ```
 ERROR: AgentCore Memory設定エラー: 環境変数 BEDROCK_AGENTCORE_MEMORY_ID が設定されていません
 ```
@@ -654,7 +1112,7 @@ agentcore memory list
 ./deploy_to_aws.sh
 ```
 
-#### 4. 認証フローエラー
+#### 6. 認証フローエラー
 ```
 ERROR: Auth flow not enabled for this client
 ```

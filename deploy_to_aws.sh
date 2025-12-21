@@ -138,15 +138,53 @@ fi
 
 echo "✅ Gateway ID取得成功: $GATEWAY_ID"
 
-# AgentCore設定でカスタムロールを指定
+# Cognito設定を取得
 echo ""
-echo "� AgeentCore設定を実行中..."
+echo "🔍 Healthmate-Coreスタックから認証設定を取得中..."
+CORE_STACK_NAME="Healthmate-CoreStack"
+USER_POOL_ID=$(aws cloudformation describe-stacks \
+    --stack-name "$CORE_STACK_NAME" \
+    --query 'Stacks[0].Outputs[?OutputKey==`UserPoolId`].OutputValue' \
+    --output text 2>/dev/null)
+
+if [ -z "$USER_POOL_ID" ] || [ "$USER_POOL_ID" = "None" ]; then
+    echo "❌ CloudFormationスタック '$CORE_STACK_NAME' からUser Pool IDを取得できませんでした"
+    echo "   スタックが存在し、UserPoolId出力があることを確認してください"
+    exit 1
+fi
+
+echo "✅ User Pool ID取得成功: $USER_POOL_ID"
+
+# JWT認証設定を作成
+JWT_DISCOVERY_URL="https://cognito-idp.${AWS_REGION}.amazonaws.com/${USER_POOL_ID}/.well-known/openid-configuration"
+USER_POOL_CLIENT_ID=$(aws cloudformation describe-stacks \
+    --stack-name "$CORE_STACK_NAME" \
+    --query 'Stacks[0].Outputs[?OutputKey==`UserPoolClientId`].OutputValue' \
+    --output text 2>/dev/null)
+
+if [ -z "$USER_POOL_CLIENT_ID" ] || [ "$USER_POOL_CLIENT_ID" = "None" ]; then
+    echo "❌ CloudFormationスタック '$CORE_STACK_NAME' からUser Pool Client IDを取得できませんでした"
+    echo "   スタックが存在し、UserPoolClientId出力があることを確認してください"
+    exit 1
+fi
+
+AUTHORIZER_CONFIG="{\"customJWTAuthorizer\":{\"discoveryUrl\":\"${JWT_DISCOVERY_URL}\",\"allowedClients\":[\"${USER_POOL_CLIENT_ID}\"]}}"
+
+echo "🔐 JWT認証設定:"
+echo "   Discovery URL: $JWT_DISCOVERY_URL"
+echo "   Allowed Clients: $USER_POOL_CLIENT_ID"
+
+# AgentCore設定でカスタムロールとJWT認証を指定
+echo ""
+echo "🔧 AgentCore設定を実行中..."
 agentcore configure \
     --entrypoint healthmate_coach_ai/agent.py \
     --name healthmate_coach_ai \
     --execution-role "$CUSTOM_ROLE_ARN" \
     --deployment-type container \
     --ecr auto \
+    --authorizer-config "$AUTHORIZER_CONFIG" \
+    --request-header-allowlist "Authorization" \
     --non-interactive
 
 echo ""
@@ -158,17 +196,17 @@ echo "🚀 AgentCore デプロイを開始します..."
 echo "   エージェント名: healthmate_coach_ai"
 echo "   エントリーポイント: healthmate_coach_ai/agent.py"
 echo "   カスタムIAMロール: $CUSTOM_ROLE_ARN"
+echo "   🔐 認証方式: JWT (Cognito)"
+echo "   🔑 JWT Discovery URL: $JWT_DISCOVERY_URL"
 
-# M2M認証とAIモデル設定
-AGENTCORE_PROVIDER_NAME="healthmanager-oauth2-provider"
-HEALTHMATE_AI_MODEL=${HEALTHMATE_AI_MODEL:-"us.amazon.nova-2-lite-v1:0"}
-# HEALTHMATE_AI_MODEL=${HEALTHMATE_AI_MODEL:-"global.anthropic.claude-sonnet-4-5-20250929-v1:0"}
+# AIモデル設定
+#HEALTHMATE_AI_MODEL=${HEALTHMATE_AI_MODEL:-"us.amazon.nova-2-lite-v1:0"}
+HEALTHMATE_AI_MODEL=${HEALTHMATE_AI_MODEL:-"global.anthropic.claude-sonnet-4-5-20250929-v1:0"}
 
 echo ""
 echo "🔍 デプロイ設定:"
 echo "   ✅ HEALTHMANAGER_GATEWAY_ID: $GATEWAY_ID"
 echo "   ✅ AWS_REGION: $AWS_REGION"
-echo "   ✅ AGENTCORE_PROVIDER_NAME: $AGENTCORE_PROVIDER_NAME"
 echo "   ✅ HEALTHMATE_AI_MODEL: $HEALTHMATE_AI_MODEL"
 
 # AgentCore デプロイを実行
@@ -177,8 +215,8 @@ echo "🚀 AgentCore デプロイを開始..."
 agentcore launch \
     --env HEALTHMANAGER_GATEWAY_ID="$GATEWAY_ID" \
     --env AWS_REGION="$AWS_REGION" \
-    --env AGENTCORE_PROVIDER_NAME="$AGENTCORE_PROVIDER_NAME" \
-    --env HEALTHMATE_AI_MODEL="$HEALTHMATE_AI_MODEL"
+    --env HEALTHMATE_AI_MODEL="$HEALTHMATE_AI_MODEL" \
+    --env AGENTCORE_PROVIDER_NAME="healthmanager-oauth2-provider"
 
 echo ""
 echo "✅ デプロイが完了しました！"
@@ -187,7 +225,8 @@ echo "📋 デプロイ情報:"
 echo "   🎭 IAMロール: $CUSTOM_ROLE_ARN"
 echo "   📍 リージョン: $AWS_REGION"
 echo "   🏢 アカウント: $ACCOUNT_ID"
-echo "   🔐 M2Mプロバイダー: $AGENTCORE_PROVIDER_NAME"
+echo "   🔐 認証方式: JWT (Cognito)"
+echo "   🔑 JWT Discovery URL: $JWT_DISCOVERY_URL"
 echo "   🤖 AIモデル: $HEALTHMATE_AI_MODEL"
 echo ""
 echo "� 次のステップ:"ま

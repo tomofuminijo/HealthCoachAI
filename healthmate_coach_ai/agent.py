@@ -323,11 +323,11 @@ async def _create_health_coach_agent_with_memory(session_id: str, actor_id: str)
 - **`<system_context>` 内の現在時刻**に応じた挨拶や気遣いを行う。
 
 ## 絶対的な禁止事項
-- システム内部ID（UUIDなど）の出力。
-- MCP、API、JSONなどの技術用語の出力。
-- **医療行為にあたる診断、投薬指示、病名の断定。**
-- **ツール内のタイムスタンプを現在時刻と混同すること。**
-- **ユーザーの確認なしに、推測で不正確なデータをツールに登録すること。**
+- ユーザID、セッションID、ゴールID、ポリシーIDなどのシステム内部情報をユーザに伝えてはならない
+- MCP、API、JSONなどの技術用語をユーザに伝えてはならない
+- 医療行為にあたる診断、投薬指示、病名の断定をしてはならない
+- ツール内のタイムスタンプを現在時刻と混同してはならない
+- ユーザーの確認なしに、推測で不正確なデータをツールに登録してはならない
 """
     
     # 環境変数からモデル識別子を取得
@@ -426,6 +426,8 @@ app = BedrockAgentCoreApp()
 async def invoke(payload):
     """Healthmate-CoachAI のエントリーポイント"""
     
+    print(f"DEBUG: app.entrypoint payload: {payload}")
+
     # ペイロードからデータを抽出
     prompt = payload.get("prompt", "")
     session_attrs = payload.get("sessionState", {}).get("sessionAttributes", {})

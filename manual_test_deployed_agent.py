@@ -4,7 +4,7 @@ Healthmate-CoachAI デプロイ済みエージェント手動テストプログ�
 
 AWSにデプロイされたHealthmate-CoachAIエージェントを
 ターミナル上でプロンプト入力による手動テストを行います。
-JWTアクセストークンを使用してboto3 bedrock-agentcoreクライアントで直接呼び出します。
+JWT IDトークンを使用してboto3 bedrock-agentcoreクライアントで直接呼び出します。
 """
 
 import asyncio
@@ -19,6 +19,8 @@ import readline
 import tempfile
 import os
 import yaml
+import requests
+import urllib.parse
 from botocore.exceptions import ClientError
 from test_config_helper import test_config
 
@@ -195,7 +197,7 @@ class DeployedAgentTestSession:
                 else:
                     raise
             
-            self.jwt_token = response['AuthenticationResult']['AccessToken']
+            self.jwt_token = response['AuthenticationResult']['AccessToken']  # AccessTokenを使用
             self.session_active = True
             
             # JWTトークンを一時ファイルに保存
@@ -206,13 +208,16 @@ class DeployedAgentTestSession:
             # JWTトークンからユーザーIDを取得して表示
             payload = self._decode_jwt_payload(self.jwt_token)
             user_id = payload.get('sub')
+            client_id = payload.get('aud')
             
             self.conversation_count = 0
             
             print(f"   ✅ 認証成功!")
             print(f"   JWT Token: {self.jwt_token[:50]}...")
             print(f"   テストユーザー: {self.test_username}")
-            print(f"   🔑 デコードしたユーザーID (sub): {user_id}")
+            print(f"   � DデコードしたユーザーID (sub): {user_id}")
+            print(f"   �  JWT Client ID (aud): {client_id}")
+            print(f"   🔑 期待されるClient ID: {self.config['client_id']}")
             print(f"   📊 DynamoDB確認用ユーザーID: {user_id}")
             print(f"   💾 JWTトークンファイル: {self.jwt_token_file}")
             
@@ -328,9 +333,6 @@ class DeployedAgentTestSession:
             # JWTトークン、タイムゾーン、言語をペイロードに含める
             payload = {
                 "prompt": query,
-                "jwt_token": self.jwt_token,
-                "timezone": TEST_TIMEZONE,
-                "language": TEST_LANGUAGE,
                 "sessionState": {
                     "sessionAttributes": {
                         "jwt_token": self.jwt_token,
@@ -345,64 +347,60 @@ class DeployedAgentTestSession:
             print("\n💬 Healthmate-CoachAI (Deployed) の回答:")
             print("-" * 60)
             
-            # boto3 bedrock-agentcore クライアントを使用してエージェントを呼び出し
-            # JWTトークンからユーザーIDを取得してruntimeUserIdとして使用
-            payload_data = self._decode_jwt_payload(self.jwt_token)
-            runtime_user_id = payload_data.get('sub', 'test-user-123')  # フォールバック値
+            # JWT認証の場合、AWS SDKは使用できないため、直接HTTPSリクエストを送信
+            # AgentCore Runtime エンドポイントURLを構築（AWS公式ドキュメント準拠）
+            escaped_agent_arn = urllib.parse.quote(self.agent_runtime_arn, safe='')
+            runtime_endpoint_url = f"https://bedrock-agentcore.{self.config['region']}.amazonaws.com/runtimes/{escaped_agent_arn}/invocations?qualifier=DEFAULT"
             
-            response = self.agentcore_client.invoke_agent_runtime(
-                agentRuntimeArn=self.agent_runtime_arn,
-                runtimeSessionId=session_id,
-                runtimeUserId=runtime_user_id,
-                payload=json.dumps(payload)
+            print(f"🔗 エンドポイント URL: {runtime_endpoint_url}")  # デバッグ用
+            
+            headers = {
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {self.jwt_token}',
+                'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id': session_id
+            }
+            
+            import requests
+            response = requests.post(
+                runtime_endpoint_url,
+                headers=headers,
+                json=payload,
+                stream=True
             )
             
             # ストリーミングレスポンスを処理
             response_text = ""
             
             try:
-                # ストリーミングレスポンスを逐次処理
-                stream = response["response"]
-                buffer = ""
+                response.raise_for_status()  # HTTPエラーをチェック
                 
-                # チャンクごとに読み取り
-                while True:
-                    try:
-                        chunk = stream.read(1024)  # 1KBずつ読み取り
-                        if not chunk:
-                            break
-                        
-                        # バッファに追加
-                        buffer += chunk.decode('utf-8', errors='ignore')
-                        
-                        # 完全な行を処理
-                        while '\n' in buffer:
-                            line, buffer = buffer.split('\n', 1)
-                            
-                            if line.startswith('data: '):
-                                try:
-                                    data_json = line[6:]  # "data: " を除去
-                                    if data_json.strip():
-                                        event_data = json.loads(data_json)
-                                        
-                                        # contentBlockDelta イベントからテキストを抽出
-                                        if 'event' in event_data and 'contentBlockDelta' in event_data['event']:
-                                            delta = event_data['event']['contentBlockDelta'].get('delta', {})
-                                            if 'text' in delta:
-                                                text_chunk = delta['text']
-                                                print(text_chunk, end='', flush=True)
-                                                response_text += text_chunk
-                                except json.JSONDecodeError:
-                                    continue
-                    except Exception as e:
-                        # ストリーム終了またはエラー
-                        break
+                # ストリーミングレスポンスを逐次処理
+                for line in response.iter_lines(decode_unicode=True):
+                    if line and line.startswith('data: '):
+                        try:
+                            data_json = line[6:]  # "data: " を除去
+                            if data_json.strip():
+                                event_data = json.loads(data_json)
+                                
+                                # contentBlockDelta イベントからテキストを抽出
+                                if 'event' in event_data and 'contentBlockDelta' in event_data['event']:
+                                    delta = event_data['event']['contentBlockDelta'].get('delta', {})
+                                    if 'text' in delta:
+                                        text_chunk = delta['text']
+                                        print(text_chunk, end='', flush=True)
+                                        response_text += text_chunk
+                        except json.JSONDecodeError:
+                            continue
                 
                 if not response_text:
                     print("⚠️  エージェントからの応答を取得できませんでした。")
                     
             except KeyboardInterrupt:
                 print("\n\n⚠️  ユーザーによって中断されました。")
+            except requests.exceptions.RequestException as e:
+                print(f"❌ HTTPリクエストエラー: {e}")
+                if hasattr(e.response, 'text'):
+                    print(f"レスポンス内容: {e.response.text}")
             
             print()  # 改行
             print("-" * 60)
@@ -426,9 +424,6 @@ class DeployedAgentTestSession:
             # JWTトークン、タイムゾーン、言語をペイロードに含める
             payload = {
                 "prompt": query,
-                "jwt_token": self.jwt_token,
-                "timezone": TEST_TIMEZONE,
-                "language": TEST_LANGUAGE,
                 "sessionState": {
                     "sessionAttributes": {
                         "jwt_token": self.jwt_token,
@@ -438,44 +433,47 @@ class DeployedAgentTestSession:
                 }
             }
             
-            # boto3 bedrock-agentcore クライアントを使用してエージェントを呼び出し
-            # JWTトークンからユーザーIDを取得してruntimeUserIdとして使用
-            payload_data = self._decode_jwt_payload(self.jwt_token)
-            runtime_user_id = payload_data.get('sub', 'test-user-123')  # フォールバック値
+            # JWT認証の場合、AWS SDKは使用できないため、直接HTTPSリクエストを送信
+            # AgentCore Runtime エンドポイントURLを構築（AWS公式ドキュメント準拠）
+            escaped_agent_arn = urllib.parse.quote(self.agent_runtime_arn, safe='')
+            runtime_endpoint_url = f"https://bedrock-agentcore.{self.config['region']}.amazonaws.com/runtimes/{escaped_agent_arn}/invocations?qualifier=DEFAULT"
             
-            response = self.agentcore_client.invoke_agent_runtime(
-                agentRuntimeArn=self.agent_runtime_arn,
-                runtimeUserId=runtime_user_id,
-                payload=json.dumps(payload)
+            headers = {
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {self.jwt_token}'
+            }
+            
+            import requests
+            response = requests.post(
+                runtime_endpoint_url,
+                headers=headers,
+                json=payload
             )
             
+            response.raise_for_status()  # HTTPエラーをチェック
+            
             # レスポンスボディを読み取り
-            response_body = response["response"].read()
+            response_text_raw = response.text
+            response_text = ""
             
-            if response_body:
-                response_text_raw = response_body.decode('utf-8', errors='ignore')
-                response_text = ""
-                
-                # SSE形式のデータを行ごとに処理
-                lines = response_text_raw.split('\n')
-                for line in lines:
-                    if line.startswith('data: '):
-                        try:
-                            data_json = line[6:]  # "data: " を除去
-                            if data_json.strip():
-                                event_data = json.loads(data_json)
-                                
-                                # contentBlockDelta イベントからテキストを抽出
-                                if 'event' in event_data and 'contentBlockDelta' in event_data['event']:
-                                    delta = event_data['event']['contentBlockDelta'].get('delta', {})
-                                    if 'text' in delta:
-                                        response_text += delta['text']
-                        except json.JSONDecodeError:
-                            continue
-                
-                return response_text or "エージェントからの応答を取得できませんでした。"
+            # SSE形式のデータを行ごとに処理
+            lines = response_text_raw.split('\n')
+            for line in lines:
+                if line.startswith('data: '):
+                    try:
+                        data_json = line[6:]  # "data: " を除去
+                        if data_json.strip():
+                            event_data = json.loads(data_json)
+                            
+                            # contentBlockDelta イベントからテキストを抽出
+                            if 'event' in event_data and 'contentBlockDelta' in event_data['event']:
+                                delta = event_data['event']['contentBlockDelta'].get('delta', {})
+                                if 'text' in delta:
+                                    response_text += delta['text']
+                    except json.JSONDecodeError:
+                        continue
             
-            return "エージェントからの応答を取得できませんでした。"
+            return response_text or "エージェントからの応答を取得できませんでした。"
         
         except Exception as e:
             return f"❌ デプロイ済みエージェント呼び出しエラー: {e}"
