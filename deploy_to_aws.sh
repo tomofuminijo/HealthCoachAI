@@ -178,7 +178,8 @@ echo "   Allowed Clients: $USER_POOL_CLIENT_ID"
 echo ""
 echo "🔧 AgentCore設定を実行中..."
 agentcore configure \
-    --entrypoint healthmate_coach_ai/agent.py \
+    --entrypoint agent/healthmate_coach_ai/agent.py \
+    --requirements-file agent/requirements.txt \
     --name healthmate_coach_ai \
     --execution-role "$CUSTOM_ROLE_ARN" \
     --deployment-type container \

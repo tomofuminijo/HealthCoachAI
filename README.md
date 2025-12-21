@@ -68,8 +68,11 @@ cd Healthmate-CoachAI
 python3 -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
-# 依存関係のインストール
-pip install -r requirements.txt
+# 開発用依存関係のインストール
+pip install -r requirements-dev.txt
+
+# Runtime用依存関係は agent/requirements.txt に分離されています
+# （デプロイ時に自動的に使用されます）
 ```
 
 ### 2. AWS認証の設定
@@ -102,8 +105,8 @@ export HEALTHMATE_AI_MODEL="global.anthropic.claude-3-5-sonnet-20241022-v2:0"
 - カスタムIAMロールの作成（必要な場合）
 - Cognito設定の自動取得（CloudFormationから）
 - JWT認証設定（Discovery URL + allowedClients）
-- AgentCore Runtime設定
-- エージェントのデプロイ
+- AgentCore Runtime設定（Runtime最適化対応）
+- エージェントのデプロイ（`agent/`ディレクトリのみをコンテナ化）
 - M2M認証プロバイダーの設定
 
 ### 4. デプロイ後のテスト
@@ -754,12 +757,15 @@ User Identity            Service Identity         Health Data
 
 ```
 Healthmate-CoachAI/
-├── healthmate_coach_ai/
-│   ├── __init__.py
-│   └── agent.py                        # メインエージェント実装（M2M認証+Memory統合）
+├── agent/                              # Runtime専用ディレクトリ（Dockerイメージに含まれる）
+│   ├── healthmate_coach_ai/
+│   │   ├── __init__.py
+│   │   ├── agent.py                    # メインエージェント実装（M2M認証+Memory統合）
+│   │   └── m2m_auth_config.py          # M2M認証設定
+│   ├── requirements.txt                # Runtime専用依存関係（最小構成）
+│   └── .dockerignore                   # Docker除外設定
 ├── manual_test_deployed_agent.py       # デプロイ済みエージェントテスト（推奨）
 ├── test_config_helper.py               # 設定ヘルパー（CloudFormation統合）
-├── test_memory_integration.py          # AgentCore Memory統合テスト
 ├── manual_test_agent.py                # ローカル開発テスト（レガシー）
 ├── create_custom_iam_role.py           # M2M認証対応IAMロール作成
 ├── check_deployment_status.py          # デプロイ状態確認
@@ -768,29 +774,72 @@ Healthmate-CoachAI/
 ├── .bedrock_agentcore.yaml             # AgentCore設定ファイル（自動生成）
 ├── agentcore-trust-policy.json         # IAM信頼ポリシー
 ├── bedrock-agentcore-runtime-policy.json # M2M認証対応ランタイムポリシー
-├── requirements.txt                    # 依存関係
+├── requirements-dev.txt                # 開発・テスト用依存関係
 ├── README.md                           # このファイル
 └── .gitignore                          # Git除外設定
+```
+
+### ディレクトリ構造の最適化（2024年12月更新）
+
+#### 🐳 Runtime専用ディレクトリ (`agent/`)
+- **目的**: Dockerイメージに含まれるファイルのみを格納
+- **効果**: コンテナイメージサイズの大幅削減
+- **内容**: 
+  - エージェント実装ファイル
+  - Runtime専用依存関係（6個のパッケージのみ）
+  - Docker設定ファイル
+
+#### 📦 依存関係の分離
+- **`agent/requirements.txt`**: Runtime環境用（6個の最小構成）
+  ```
+  strands-agents>=0.1.0
+  bedrock-agentcore[strands-agents]>=0.1.0
+  httpx>=0.24.0
+  pytz>=2023.3
+  fastapi>=0.104.0
+  boto3>=1.34.0
+  ```
+- **`requirements-dev.txt`**: 開発・テスト用（10個の追加パッケージ）
+  ```
+  bedrock-agentcore-starter-toolkit>=0.1.0
+  PyYAML>=6.0
+  pytest>=7.4.0
+  pytest-asyncio>=0.21.0
+  hypothesis>=6.88.0
+  mcp>=1.0.0
+  black>=23.0.0
+  flake8>=6.0.0
+  mypy>=1.5.0
+  ```
+
+#### 🚀 デプロイ設定の更新
+`deploy_to_aws.sh`内で以下の引数が追加されました：
+```bash
+agentcore configure \
+    --entrypoint agent/healthmate_coach_ai/agent.py \
+    --requirements-file agent/requirements.txt \
+    # ... その他の設定
 ```
 
 ### 主要ファイルの説明
 
 #### 🚀 デプロイ・設定
-- **`deploy_to_aws.sh`**: JWT認証対応のワンコマンドデプロイ
+- **`deploy_to_aws.sh`**: JWT認証対応のワンコマンドデプロイ（Runtime最適化対応）
 - **`create_custom_iam_role.py`**: M2M認証に必要な権限を含むIAMロール作成
 - **`bedrock-agentcore-runtime-policy.json`**: M2M認証権限を含むポリシー定義
 
 #### 🧪 テスト・開発
 - **`manual_test_deployed_agent.py`**: JWT認証対応のメインテストツール
 - **`test_config_helper.py`**: CloudFormation統合テスト
-- **`test_memory_integration.py`**: AgentCore Memory機能テスト
+- **`requirements-dev.txt`**: 開発環境専用の依存関係
 
-#### 🤖 エージェント実装
-- **`healthmate_coach_ai/agent.py`**: 
+#### 🤖 エージェント実装（Runtime専用）
+- **`agent/healthmate_coach_ai/agent.py`**: 
   - JWT処理（ユーザー識別専用）
   - M2M認証統合（`@requires_access_token`）
   - AgentCore Memory統合
   - 17個のMCPツール連携
+- **`agent/requirements.txt`**: Runtime環境で必要な最小限の依存関係
 
 ## 🔒 セキュリティ
 
