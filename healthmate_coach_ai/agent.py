@@ -432,9 +432,13 @@ app.add_middleware(
 )
 
 # Handle browser preflight requests to /invocations
-@app.options("/invocations")
-async def options_handler():
-    return {"message": "OK"}
+async def options_handler(request):
+    """OPTIONSリクエストハンドラー"""
+    from starlette.responses import JSONResponse
+    return JSONResponse({"message": "OK"})
+
+# OPTIONSエンドポイントを追加
+app.add_route("/invocations", options_handler, methods=["OPTIONS"])
 
 
 @app.entrypoint
