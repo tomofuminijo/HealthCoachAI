@@ -433,23 +433,33 @@ app.add_middleware(
 
 
 @app.entrypoint
-async def invoke(payload):
+async def invoke(payload, context):
     """Healthmate-CoachAI のエントリーポイント"""
     
     print(f"DEBUG: app.entrypoint payload: {payload}")
+    print(f"DEBUG: app.entrypoint context: {context}")
 
     # ペイロードからデータを抽出
     prompt = payload.get("prompt", "")
     session_attrs = payload.get("sessionState", {}).get("sessionAttributes", {})
     
+    # コンテキストから、Authヘッダーを抽出
+    auth_header = context.request_headers.get('Authorization')
+
+    # 必須フィールドの検証
+    if not auth_header:
+        yield {"event": {"contentBlockDelta": {"delta": {"text": "エラー: Authorizationヘッダーが必要です。"}}}}
+        return
+
     # 必須フィールドを抽出
-    jwt_token_from_payload = session_attrs.get("jwt_token")
+#    jwt_token_from_payload = session_attrs.get("jwt_token")
+    jwt_token_from_context = auth_header.replace('Bearer ', '') if auth_header.startswith('Bearer ') else auth_header
     session_id_from_payload = session_attrs.get("session_id")
     timezone_from_payload = session_attrs.get("timezone", "Asia/Tokyo")
     language_from_payload = session_attrs.get("language", "ja")
     
     # 必須フィールドの検証
-    if not jwt_token_from_payload:
+    if not jwt_token_from_context:
         yield {"event": {"contentBlockDelta": {"delta": {"text": "エラー: JWT認証トークンが必要です。"}}}}
         return
     
@@ -459,7 +469,7 @@ async def invoke(payload):
     
     # グローバル変数を設定
     global _current_jwt_token, _current_timezone, _current_language
-    _current_jwt_token = jwt_token_from_payload
+    _current_jwt_token = jwt_token_from_context
     _current_timezone = timezone_from_payload
     _current_language = language_from_payload
     
