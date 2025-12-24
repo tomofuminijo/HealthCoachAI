@@ -6,6 +6,7 @@ Amazon Bedrock AgentCore Runtime上で動作する健康支援AIエージェン�
 """
 
 import os
+import sys
 import asyncio
 import httpx
 import json
@@ -20,22 +21,28 @@ from bedrock_agentcore.memory.integrations.strands.session_manager import AgentC
 from healthmate_coach_ai.m2m_auth_config import M2MAuthConfig
 from fastapi.middleware.cors import CORSMiddleware
 
-# 環境設定モジュールのインポート
-from healthmate_coach_ai.environment.environment_manager import EnvironmentManager
-from healthmate_coach_ai.environment.configuration_provider import ConfigurationProvider
-from healthmate_coach_ai.environment.log_controller import LogController, safe_logging_setup
 
-# ログ設定の初期化（環境別）
-log_controller = safe_logging_setup("Healthmate-CoachAI")
-logger = log_controller.get_logger(__name__) if log_controller else logging.getLogger(__name__)
+# ログ設定
+env = os.environ.get('HEALTHMATE_ENV', 'dev').lower()
+if env == 'prod':
+    log_level = 'WARNING'
+elif env == 'stage':
+    log_level = 'INFO'
+else:  # dev
+    log_level = 'DEBUG'
 
-# 環境設定の初期化
-environment_manager = EnvironmentManager()
-config_provider = ConfigurationProvider("Healthmate-CoachAI")
+# ロガーの初期化
+logger = logging.getLogger('HealthCoachAI')
+logger.setLevel(getattr(logging, log_level.upper()))
+
+# 標準出力へのハンドラを追加（これがCloudWatch Logsに転送されます）
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+logger.addHandler(handler)
 
 # 環境情報をログに出力
-logger.info(f"CoachAI starting in {environment_manager.get_environment()} environment")
-logger.info(f"AWS Region: {config_provider.get_aws_region()}")
+logger.info(f"CoachAI starting in {env} environment")
+logger.info(f"AWS Region: {os.environ.get('AWS_REGION', 'us-west-2')}")
 
 # M2M認証用デコレータのインポート
 try:
@@ -358,8 +365,8 @@ async def _create_health_coach_agent_with_memory(session_id: str, actor_id: str)
         raise Exception("環境変数 HEALTHMATE_AI_MODEL が設定されていません")
     
     # 使用するモデルをログに出力
-    logger.debug(f"システムプロンプト設定完了")
-    logger.info(f"使用AIモデル: {model_id}")
+    logger.debug(f"system_prompt: {system_prompt}")
+    logger.info(f"model_id: {model_id}")
     
     # Strandsエージェントを作成（メモリ統合付き）
     return Agent(
@@ -454,7 +461,6 @@ app.add_middleware(
 @app.entrypoint
 async def invoke(payload, context):
     """Healthmate-CoachAI のエントリーポイント"""
-    
     logger.debug(f"app.entrypoint payload: {payload}")
     logger.debug(f"app.entrypoint context: {context}")
 
