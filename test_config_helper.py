@@ -44,9 +44,8 @@ class TestConfig:
         return core_stack, healthmanager_stack
     
     def _get_region(self) -> str:
-        """AWSリージョンを取得（us-west-2固定）"""
-        # Healthmateプロダクトはus-west-2リージョンを使用
-        return 'us-west-2'
+        # AWS_REGION 環境変数から取得、デフォルトは、us-west-2リージョンを使用
+        return os.environ.get('AWS_REGION', 'us-west-2')
     
     def _fetch_cloudformation_config(self) -> dict:
         """CloudFormationスタックから設定を取得"""

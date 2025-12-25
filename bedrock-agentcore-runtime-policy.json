@@ -37,7 +37,7 @@
             "Action": [
                 "secretsmanager:GetSecretValue"
             ],
-            "Resource": "arn:aws:secretsmanager:us-west-2:718691933423:secret:bedrock-agentcore-identity!default/oauth2/healthmanager-oauth2-provider-*"
+            "Resource": "arn:aws:secretsmanager:*:*:secret:bedrock-agentcore-identity!default/oauth2/healthmanager-oauth2-provider-*"
         },
         {
             "Effect": "Allow",
