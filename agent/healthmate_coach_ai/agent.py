@@ -483,7 +483,6 @@ async def invoke(payload, context):
 
     # ペイロードからデータを抽出
     prompt = payload.get("prompt", "")
-    session_attrs = payload.get("sessionState", {}).get("sessionAttributes", {})
     
     # コンテキストから、Authヘッダーを抽出
     auth_header = context.request_headers.get('Authorization')
@@ -496,8 +495,8 @@ async def invoke(payload, context):
     # 必須フィールドを抽出
     jwt_token_from_context = auth_header.replace('Bearer ', '') if auth_header.startswith('Bearer ') else auth_header
     session_id_from_context = context.session_id
-    timezone_from_payload = session_attrs.get("timezone", "Asia/Tokyo")
-    language_from_payload = session_attrs.get("language", "ja")
+    timezone_from_payload = payload.get("timezone", "Asia/Tokyo")
+    language_from_payload = payload.get("language", "ja")
     
     # 必須フィールドの検証
     if not jwt_token_from_context:

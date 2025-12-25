@@ -423,12 +423,8 @@ endpoint_url = f"https://bedrock-agentcore.{region}.amazonaws.com/runtimes/{esca
 # ペイロード構築
 payload = {
     "prompt": "こんにちは！今日の健康状態はいかがですか？",
-    "sessionState": {
-        "sessionAttributes": {
-            "timezone": "Asia/Tokyo",
-            "language": "ja"
-        }
-    }
+    "timezone": "Asia/Tokyo",
+    "language": "ja"
 }
 
 # リクエスト送信
@@ -472,12 +468,8 @@ const endpointUrl = `https://bedrock-agentcore.${region}.amazonaws.com/runtimes/
 // ペイロード構築
 const payload = {
     prompt: "こんにちは！今日の健康状態はいかがですか？",
-    sessionState: {
-        sessionAttributes: {
-            timezone: "Asia/Tokyo",
-            language: "ja"
-        }
-    }
+    timezone: "Asia/Tokyo",
+    language: "ja"
 };
 
 // リクエスト送信
@@ -551,12 +543,8 @@ class HealthCoachClient:
         
         payload = {
             "prompt": message,
-            "sessionState": {
-                "sessionAttributes": {
-                    "timezone": timezone,
-                    "language": language
-                }
-            }
+            "timezone": timezone,
+            "language": language
         }
         
         headers = {
@@ -673,21 +661,20 @@ print(f"文字数: {len(session_id)}")  # 47文字（33文字以上の要件を�
 
 ### ペイロード構造
 
-HealthmateUI サービスから送信される最適化されたペイロード：
+HealthmateUI サービスから送信されるシンプルなフラット構造：
 
 ```json
 {
   "prompt": "ユーザーからのメッセージ",
-  "sessionState": {
-    "sessionAttributes": {
-      "timezone": "Asia/Tokyo",
-      "language": "ja"
-    }
-  }
+  "timezone": "Asia/Tokyo",
+  "language": "ja"
 }
 ```
 
-**重要な変更**: session_id は payload から削除され、ヘッダーのみで送信されます：
+**重要な変更**: 
+- session_id は payload から削除され、ヘッダーのみで送信
+- sessionState/sessionAttributes の階層構造を廃止し、フラット構造を採用
+
 ```http
 Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
 X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: healthmate-chat-1234567890-abcdef
@@ -698,8 +685,8 @@ X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: healthmate-chat-1234567890-abcdef
 | フィールド | 必須 | 説明 |
 |-----------|------|------|
 | `prompt` | ✅ | ユーザーからのメッセージ |
-| `sessionState.sessionAttributes.timezone` | ⚪ | ユーザーのタイムゾーン（デフォルト: "Asia/Tokyo"） |
-| `sessionState.sessionAttributes.language` | ⚪ | ユーザーの言語設定（デフォルト: "ja"） |
+| `timezone` | ⚪ | ユーザーのタイムゾーン（デフォルト: "Asia/Tokyo"） |
+| `language` | ⚪ | ユーザーの言語設定（デフォルト: "ja"） |
 
 ### 認証・セッションヘッダー
 

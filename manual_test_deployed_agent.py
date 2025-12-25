@@ -299,68 +299,7 @@ class DeployedAgentTestSession:
         self.conversation_count = 0
         self.jwt_token_file = None
     
-    async def run_memory_continuity_test(self, session_id: str):
-        """セッション継続性の自動テストを実行"""
-        if not self.session_active or not self.jwt_token:
-            print("❌ セッションまたはJWTトークンが無効です。")
-            return
-        
-        print("🧠 AgentCore Memoryセッション継続性テスト")
-        print("=" * 60)
-        print(f"📋 テストセッションID: {session_id}")
-        print()
-        
-        # テスト1: 名前の記憶
-        print("📝 テスト1: 名前の記憶と呼び出し")
-        print("-" * 40)
-        
-        test1_query = "私の名前はジョニーです。好きなものはバナナです。"
-        print(f"👤 ユーザー: {test1_query}")
-        print("🤖 AI応答:")
-        await self.test_agent_query_streaming(test1_query, session_id)
-        
-        print("\n⏳ 少し待機してから次のテストを実行...")
-        await asyncio.sleep(2)
-        
-        test2_query = "私の名前は何ですか？また、私が好きなものは何でしたか？"
-        print(f"👤 ユーザー: {test2_query}")
-        print("🤖 AI応答:")
-        await self.test_agent_query_streaming(test2_query, session_id)
-        
-        print("\n⏳ 少し待機してから次のテストを実行...")
-        await asyncio.sleep(2)
-        
-        # テスト2: 会話の文脈継続
-        print("\n📝 テスト2: 会話の文脈継続")
-        print("-" * 40)
-        
-        test3_query = "健康目標として、毎日1万歩歩くことを設定したいです。"
-        print(f"👤 ユーザー: {test3_query}")
-        print("🤖 AI応答:")
-        await self.test_agent_query_streaming(test3_query, session_id)
-        
-        print("\n⏳ 少し待機してから次のテストを実行...")
-        await asyncio.sleep(2)
-        
-        test4_query = "先ほど設定した目標について、進捗を確認する方法を教えてください。"
-        print(f"👤 ユーザー: {test4_query}")
-        print("🤖 AI応答:")
-        await self.test_agent_query_streaming(test4_query, session_id)
-        
-        print("\n" + "=" * 60)
-        print("✅ セッション継続性テスト完了")
-        print()
-        print("📊 テスト結果の確認ポイント:")
-        print("  1. AIが「ジョニー」という名前を覚えているか")
-        print("  2. AIが「バナナ」が好きなことを覚えているか")
-        print("  3. AIが「1万歩」の健康目標を覚えているか")
-        print("  4. 会話の文脈が適切に継続されているか")
-        print()
-        print("💡 期待される動作:")
-        print("  - 同じセッションIDでの会話では前の内容を参照する")
-        print("  - AgentCore Memoryが正常に動作している")
-        print("  - セッション管理が適切に統合されている")
-    
+
     async def test_agent_query_streaming(self, query: str, session_id: str = None):
         """デプロイされたエージェントにクエリを送信（ストリーミング対応）"""
         if not self.session_active or not self.jwt_token or not self.agent_runtime_arn:
@@ -379,12 +318,8 @@ class DeployedAgentTestSession:
             # JWTトークン、タイムゾーン、言語をペイロードに含める
             payload = {
                 "prompt": query,
-                "sessionState": {
-                    "sessionAttributes": {
-                        "timezone": TEST_TIMEZONE,
-                        "language": TEST_LANGUAGE
-                    }
-                }
+                "timezone": TEST_TIMEZONE,
+                "language": TEST_LANGUAGE
             }
             
 
@@ -457,71 +392,6 @@ class DeployedAgentTestSession:
             import traceback
             traceback.print_exc()
     
-    async def test_agent_query(self, query: str) -> str:
-        """デプロイされたエージェントにクエリを送信（非ストリーミング・互換性用）"""
-        if not self.session_active or not self.jwt_token or not self.agent_runtime_arn:
-            return "❌ セッションまたはJWTトークンが無効です。"
-        
-        try:
-            self.conversation_count += 1
-            
-            # JWTトークン、タイムゾーン、言語をペイロードに含める
-            payload = {
-                "prompt": query,
-                "sessionState": {
-                    "sessionAttributes": {
-                        "jwt_token": self.jwt_token,
-                        "timezone": TEST_TIMEZONE,
-                        "language": TEST_LANGUAGE
-                    }
-                }
-            }
-            
-            # JWT認証の場合、AWS SDKは使用できないため、直接HTTPSリクエストを送信
-            # AgentCore Runtime エンドポイントURLを構築（AWS公式ドキュメント準拠）
-            escaped_agent_arn = urllib.parse.quote(self.agent_runtime_arn, safe='')
-            runtime_endpoint_url = f"https://bedrock-agentcore.{self.config['region']}.amazonaws.com/runtimes/{escaped_agent_arn}/invocations?qualifier=DEFAULT"
-            
-            headers = {
-                'Content-Type': 'application/json',
-                'Authorization': f'Bearer {self.jwt_token}'
-            }
-            
-            import requests
-            response = requests.post(
-                runtime_endpoint_url,
-                headers=headers,
-                json=payload
-            )
-            
-            response.raise_for_status()  # HTTPエラーをチェック
-            
-            # レスポンスボディを読み取り
-            response_text_raw = response.text
-            response_text = ""
-            
-            # SSE形式のデータを行ごとに処理
-            lines = response_text_raw.split('\n')
-            for line in lines:
-                if line.startswith('data: '):
-                    try:
-                        data_json = line[6:]  # "data: " を除去
-                        if data_json.strip():
-                            event_data = json.loads(data_json)
-                            
-                            # contentBlockDelta イベントからテキストを抽出
-                            if 'event' in event_data and 'contentBlockDelta' in event_data['event']:
-                                delta = event_data['event']['contentBlockDelta'].get('delta', {})
-                                if 'text' in delta:
-                                    response_text += delta['text']
-                    except json.JSONDecodeError:
-                        continue
-            
-            return response_text or "エージェントからの応答を取得できませんでした。"
-        
-        except Exception as e:
-            return f"❌ デプロイ済みエージェント呼び出しエラー: {e}"
-
 
 def print_banner():
     """バナー表示（環境別対応）"""
@@ -731,11 +601,6 @@ async def main():
                 print()
                 continue
             
-            elif user_input.lower() == 'memory_test':
-                print("🧠 セッション継続性テストを開始します...")
-                await session.run_memory_continuity_test(test_session_id)
-                print()
-                continue
             
             # デプロイされたエージェントにクエリを送信（ストリーミング）
             print("\n🤔 デプロイされたエージェント (AgentCore Runtime) に送信中...")
