@@ -36,7 +36,7 @@ Healthmate-CoachAI は以下の3つの環境をサポートします：
 |------|------------|-----------|---------|
 | dev | `Healthmate-CoachAI-AgentCore-Runtime-Role-dev` | `healthmate_coach_ai_mem-dev-xxxxx` | `healthmate_coach_ai-dev` |
 | stage | `Healthmate-CoachAI-AgentCore-Runtime-Role-stage` | `healthmate_coach_ai_mem-stage-xxxxx` | `healthmate_coach_ai-stage` |
-| prod | `Healthmate-CoachAI-AgentCore-Runtime-Role` | `healthmate_coach_ai_mem-xxxxx` | `healthmate_coach_ai` |
+| prod | `Healthmate-CoachAI-AgentCore-Runtime-Role-prod` | `healthmate_coach_ai_mem-prod-xxxxx` | `healthmate_coach_ai-prod` |
 
 ## 主な機能
 
