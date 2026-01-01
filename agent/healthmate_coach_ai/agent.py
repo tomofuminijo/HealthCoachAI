@@ -345,7 +345,21 @@ async def _create_health_coach_agent_with_memory(session_id: str, actor_id: str)
     memory_config = AgentCoreMemoryConfig(
         memory_id=memory_id,
         session_id=session_id,
-        actor_id=actor_id
+        actor_id=actor_id,
+        retrieval_config={
+            "/preferences/{actorId}": RetrievalConfig(
+                top_k=5,
+                relevance_score=0.7
+            ),
+            "/facts/{actorId}": RetrievalConfig(
+                top_k=10,
+                relevance_score=0.3
+            ),
+            "/summaries/{actorId}/{sessionId}": RetrievalConfig(
+                top_k=5,
+                relevance_score=0.5
+            )
+        }
     )
     
     # AgentCoreMemorySessionManagerを作成
